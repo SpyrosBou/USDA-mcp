@@ -24,7 +24,7 @@ A Model Context Protocol (MCP) server that exposes tools for working with the US
 
    The server reads `USDA_API_KEY`. You can optionally override the base URL with `USDA_API_BASE_URL` if you are using a proxy.
 
-3. Run the server:
+3. Run the server (the `.env` file is loaded automatically):
 
    ```bash
    npm run start
