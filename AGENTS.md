@@ -1,0 +1,35 @@
+# Repository Guidelines
+
+## Project Structure & Module Organization
+- `src/` contains TypeScript sources: `src/server.ts` (entry point), `src/usdaClient.ts` (API client), and `src/config.ts` (environment defaults).
+- `dist/` stores build artifacts from `npm run build`; never edit them directly.
+- Keep `README.md` and this guide aligned with behavior changes, and use `.env.example` as the template without committing `.env`.
+
+## Build, Test, and Development Commands
+- `npm install` – install dependencies; run this whenever `package.json` changes.
+- `npm run start` – launch the MCP server via `tsx` for local development or Claude Desktop integration.
+- `npm run lint` – execute `tsc --noEmit` to surface type errors before review.
+- `npm run build` – transpile the project into `dist/` for distribution or packaging.
+- `npm run usda` – run the compiled server to validate the build output matches expectations.
+
+## Coding Style & Naming Conventions
+- Write TypeScript with ECMAScript modules, two-space indentation, and no trailing whitespace.
+- Keep files single-purpose and prefer named exports: transport logic in `src/server.ts`, HTTP orchestration in `src/usdaClient.ts`, configuration helpers in `src/config.ts`.
+- Use `camelCase` for variables and functions, `PascalCase` for types and classes, uppercase snake case for environment constants, and mirror USDA API shapes with matching `zod` schemas.
+
+## Testing Guidelines
+- No automated suite is in place; outline your testing approach in the PR (pull request) and add coverage when feasible.
+- Prefer the built-in `node:test` module or `vitest` for new suites; co-locate specs as `<module>.spec.ts` beside the source.
+- When mocking USDA responses, store fixtures under `__fixtures__/` and cover both textual summaries and `structuredContent`.
+- Run `npm run lint` before review and treat type-check failures as blocking issues.
+
+## Commit & Pull Request Guidelines
+- Follow Conventional Commits (`feat:`, `fix:`, `docs:`, etc.) and keep each commit scoped to one concern.
+- Include PR context, testing performed, and configuration notes; link issues or tickets when applicable.
+- Highlight documentation or configuration updates, and add screenshots only when the observable output changes.
+- Seek at least one maintainer review before merging and flag any breaking behavior changes in both the description and commit message.
+
+## Configuration Notes
+- Never commit `.env`; manage secrets via environment variables or workspace overrides.
+- When rotating the USDA API key, update `src/config.ts` defaults and reflect the change in `README.md` and this guide.
+- Keep sample configuration minimal so contributors can validate locally without exposing private keys.
