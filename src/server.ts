@@ -3,7 +3,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 
-import { describeEnvironmentRequirements } from './config.js';
 import {
   FoodDataCentralClient,
   FoodItem,
@@ -17,20 +16,7 @@ const server = new McpServer({
   version: '0.1.0'
 });
 
-let client: FoodDataCentralClient;
-
-try {
-  client = new FoodDataCentralClient();
-} catch (error) {
-  console.error('Unable to start USDA FoodData Central MCP server.');
-  console.error(describeEnvironmentRequirements());
-  if (error instanceof Error) {
-    console.error(error.message);
-  } else {
-    console.error(String(error));
-  }
-  process.exit(1);
-}
+const client = new FoodDataCentralClient();
 
 const foodDataTypeSchema = z
   .enum(['Branded', 'Survey (FNDDS)', 'SR Legacy', 'Foundation', 'Experimental'])

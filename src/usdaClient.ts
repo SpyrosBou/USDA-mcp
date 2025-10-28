@@ -1,4 +1,4 @@
-import { USDA_API_BASE_URL, getRequiredApiKey } from './config.js';
+import { USDA_API_BASE_URL, getApiKey } from './config.js';
 
 type QueryValue = string | number | boolean | Array<string | number | boolean>;
 
@@ -67,7 +67,7 @@ export class FoodDataCentralClient {
 
   constructor(options?: { baseUrl?: string; apiKey?: string }) {
     this.baseUrl = new URL(options?.baseUrl ?? USDA_API_BASE_URL);
-    this.apiKey = options?.apiKey ?? getRequiredApiKey();
+    this.apiKey = options?.apiKey ?? getApiKey();
   }
 
   async searchFoods(params: SearchFoodsRequest): Promise<SearchFoodsResponse> {

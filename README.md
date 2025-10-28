@@ -5,7 +5,7 @@ A Model Context Protocol (MCP) server that exposes tools for working with the US
 ## Prerequisites
 
 - Node.js 18.19 or newer (the version bundled with Claude Desktop works)
-- A FoodData Central API key from the USDA (https://fdc.nal.usda.gov/api-key-signup.html)
+- A FoodData Central API key from the USDA (https://fdc.nal.usda.gov/api-key-signup.html) — one is baked into the server for quick testing, but you can override it with your own key.
 
 ## Getting Started
 
@@ -15,16 +15,16 @@ A Model Context Protocol (MCP) server that exposes tools for working with the US
    npm install
    ```
 
-2. Copy the environment template and add your API key:
+2. (Optional) Override configuration:
 
    ```bash
    cp .env.example .env
-   # edit .env and add USDA_API_KEY=your-key
+   # edit .env and add USDA_API_KEY=your-key  # optional override
    ```
 
-   The server reads `USDA_API_KEY`. You can optionally override the base URL with `USDA_API_BASE_URL` if you are using a proxy.
+   The server will fall back to the baked-in key if `USDA_API_KEY` is unset. You can also override the base URL with `USDA_API_BASE_URL` when routing through a proxy.
 
-3. Run the server (the `.env` file is loaded automatically):
+3. Run the server (the `.env` file is loaded automatically when present):
 
    ```bash
    npm run start
@@ -52,16 +52,13 @@ Add an entry similar to the following to your MCP client configuration (example 
   "mcpServers": {
     "usda-fooddata": {
       "command": "npm",
-      "args": ["run", "start"],
-      "env": {
-        "USDA_API_KEY": "paste-your-api-key"
-      }
+      "args": ["run", "start"]
     }
   }
 }
 ```
 
-Adjust the `command` and `args` if your client prefers a direct Node.js invocation (`["tsx", "src/server.ts"]`) or if you have global installs.
+Adjust the `command` and `args` if your client prefers a direct Node.js invocation (`["tsx", "src/server.ts"]`) or if you have global installs. Provide `USDA_API_KEY` via your client configuration only when you want to override the built-in key.
 
 ## Development
 
