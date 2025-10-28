@@ -183,6 +183,8 @@ server.registerTool(
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  process.stdin.resume();
+  await waitForShutdown();
 }
 
 main().catch((error) => {
@@ -194,6 +196,65 @@ main().catch((error) => {
   }
   process.exit(1);
 });
+
+async function waitForShutdown(): Promise<void> {
+  const signals: NodeJS.Signals[] = ['SIGINT', 'SIGTERM'];
+
+  await new Promise<void>((resolve) => {
+    let resolved = false;
+
+    const originalOnClose = server.server.onclose;
+    const keepAlive = setInterval(() => {
+      // Prevent the process from exiting before the client connects.
+    }, 1 << 30);
+
+    const cleanup = (): void => {
+      clearInterval(keepAlive);
+      for (const signal of signals) {
+        process.removeListener(signal, handleSignal);
+      }
+      server.server.onclose = originalOnClose;
+    };
+
+    const resolveOnce = (): void => {
+      if (resolved) {
+        return;
+      }
+      resolved = true;
+      cleanup();
+      resolve();
+    };
+
+    const handleSignal = (): void => {
+      if (resolved) {
+        return;
+      }
+
+      server
+        .close()
+        .catch((closeError) => {
+          console.error('Failed to close USDA FoodData Central MCP server gracefully.');
+          if (closeError instanceof Error) {
+            console.error(closeError.message);
+          } else {
+            console.error(String(closeError));
+          }
+        })
+        .finally(resolveOnce);
+    };
+
+    server.server.onclose = () => {
+      if (typeof originalOnClose === 'function') {
+        originalOnClose();
+      }
+      resolveOnce();
+    };
+
+    for (const signal of signals) {
+      process.on(signal, handleSignal);
+    }
+  });
+}
 
 function describeFood(food: FoodItem): string {
   const description =

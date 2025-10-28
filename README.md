@@ -32,6 +32,26 @@ A Model Context Protocol (MCP) server that exposes tools for working with the US
 
    The entry point uses STDIO transport, making it compatible with Claude Desktop and other MCP-aware clients.
 
+## Codex CLI Integration
+
+Codex ships with native Model Context Protocol support. Add the server to your `config.toml` (typically at `$CODEX_HOME/config.toml` or `~/.config/codex/config.toml`) so Codex can launch it on demand:
+
+```toml
+experimental_use_rmcp_client = true
+
+[mcp_servers.usda_fooddata]
+command = "npm"
+args = ["run", "start"]
+startup_timeout_sec = 20
+tool_timeout_sec = 60
+
+# Optional overrides; the baked-in key remains usable if you omit these.
+# env.USDA_API_KEY = "your-api-key"
+# env.USDA_API_BASE_URL = "https://api.nal.usda.gov/fdc/v1/"
+```
+
+After saving the configuration, start a Codex session (e.g., `codex chat`) and enable the `usda_fooddata` server from the MCP panel. Codex will handshake over stdio, keep the process alive, and expose the four tools listed below.
+
 ## Available Tools
 
 The server registers four tools, each mirroring a FoodData Central endpoint.
