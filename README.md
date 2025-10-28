@@ -32,6 +32,14 @@ A Model Context Protocol (MCP) server that exposes tools for working with the US
 
    The entry point uses STDIO transport, making it compatible with Claude Desktop and other MCP-aware clients.
 
+   Once you have built the project (`npm run build`), you can also launch it directly with the bundled CLI:
+
+   ```bash
+   npx usda-mcp
+   ```
+
+   The CLI script will boot the compiled server from `dist/server.js`, so you can wire it into any MCP-aware agent without a separate terminal.
+
 ## Codex CLI Integration
 
 Codex ships with native Model Context Protocol support. Add the server to your `config.toml` (typically at `$CODEX_HOME/config.toml` or `~/.config/codex/config.toml`) so Codex can launch it on demand:
@@ -40,8 +48,7 @@ Codex ships with native Model Context Protocol support. Add the server to your `
 experimental_use_rmcp_client = true
 
 [mcp_servers.usda_fooddata]
-command = "npm"
-args = ["run", "start"]
+command = "usda-mcp"
 startup_timeout_sec = 20
 tool_timeout_sec = 60
 
@@ -57,7 +64,7 @@ After saving the configuration, start a Codex session (e.g., `codex chat`) and e
 The server registers four tools, each mirroring a FoodData Central endpoint.
 
 - `search-foods` – Full text search across FoodData Central with filters for data type, brand owner, ingredients, and nutrients.
-- `get-food` – Retrieve detailed information about a single food by its FoodData Central (FDC) ID.
+- `get-food` – Retrieve detailed information about a single food by its FoodData Central (FDC) ID, including a macro nutrient summary (calories, protein, fat, carbs) when available.
 - `get-foods` – Request multiple foods in one call by providing a list of FDC IDs (bulk endpoint).
 - `list-foods` – Page through foods with optional sorting and filtering when you already know the data type or brand you need.
 

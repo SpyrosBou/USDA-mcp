@@ -62,6 +62,9 @@ server.registerTool(
 
     const results = await client.searchFoods(params);
     const summary = `Search "${input.query}" matched ${results.totalHits} foods (showing page ${results.currentPage} of ${results.totalPages}).`;
+    const summaries = Array.isArray(results.foods)
+      ? results.foods.map((food) => toFoodSummary(food))
+      : [];
 
     return {
       content: [
@@ -70,7 +73,10 @@ server.registerTool(
           text: summary
         }
       ],
-      structuredContent: { results }
+      structuredContent: {
+        results,
+        summaries
+      }
     };
   }
 );
@@ -93,15 +99,20 @@ server.registerTool(
     };
 
     const food = await client.getFood(input.fdcId, options);
+    const macros = extractMacroSummary(food);
+    const macroHeadline = describeMacroSummary(macros);
 
     return {
       content: [
         {
           type: 'text',
-          text: `Fetched food ${describeFood(food)}.`
+          text: [`Fetched food ${describeFood(food)}.`, macroHeadline].filter(Boolean).join(' ')
         }
       ],
-      structuredContent: { food }
+      structuredContent: {
+        food,
+        ...(macros ? { macros } : {})
+      }
     };
   }
 );
@@ -127,6 +138,8 @@ server.registerTool(
     const preview = foods.slice(0, 3).map((food) => describeFood(food)).join('; ');
     const summary = `Fetched ${foods.length} foods. ${preview ? `Examples: ${preview}.` : ''}`;
 
+    const summaries = foods.map((food) => toFoodSummary(food));
+
     return {
       content: [
         {
@@ -134,7 +147,10 @@ server.registerTool(
           text: summary.trim()
         }
       ],
-      structuredContent: { foods }
+      structuredContent: {
+        foods,
+        summaries
+      }
     };
   }
 );
@@ -167,6 +183,7 @@ server.registerTool(
     const foods = await client.listFoods(params);
     const headline = foods.length ? foods.slice(0, 3).map((food) => describeFood(food)).join('; ') : 'No foods returned.';
     const summary = `Retrieved ${foods.length} foods. ${headline}`;
+    const summaries = foods.map((food) => toFoodSummary(food));
 
     return {
       content: [
@@ -175,7 +192,10 @@ server.registerTool(
           text: summary.trim()
         }
       ],
-      structuredContent: { foods }
+      structuredContent: {
+        foods,
+        summaries
+      }
     };
   }
 );
@@ -271,4 +291,160 @@ function describeFood(food: FoodItem): string {
         ? food.fdcId
         : undefined;
   return `${description}${brand}${fdcId ? ` [FDC ${fdcId}]` : ''}`;
+}
+
+type MacroSummary = {
+  calories?: number;
+  protein?: number;
+  fat?: number;
+  carbs?: number;
+};
+
+const MACRO_NUTRIENT_IDS: Record<keyof MacroSummary, ReadonlySet<number>> = {
+  calories: new Set([1008, 208]),
+  protein: new Set([1003, 203]),
+  fat: new Set([1004, 204]),
+  carbs: new Set([1005, 205])
+};
+
+function extractMacroSummary(food: FoodItem): MacroSummary | undefined {
+  const nutrients = (food as Record<string, unknown>)?.foodNutrients;
+  if (!Array.isArray(nutrients)) {
+    return undefined;
+  }
+
+  const summary: MacroSummary = {};
+
+  for (const entry of nutrients) {
+    const nutrientId = resolveNutrientId(entry);
+    if (nutrientId === undefined) {
+      continue;
+    }
+
+    const amount = resolveNutrientAmount(entry);
+    if (amount === undefined) {
+      continue;
+    }
+
+    if (MACRO_NUTRIENT_IDS.calories.has(nutrientId)) {
+      summary.calories ??= amount;
+    } else if (MACRO_NUTRIENT_IDS.protein.has(nutrientId)) {
+      summary.protein ??= amount;
+    } else if (MACRO_NUTRIENT_IDS.fat.has(nutrientId)) {
+      summary.fat ??= amount;
+    } else if (MACRO_NUTRIENT_IDS.carbs.has(nutrientId)) {
+      summary.carbs ??= amount;
+    }
+  }
+
+  return Object.values(summary).some((value) => value !== undefined) ? summary : undefined;
+}
+
+function resolveNutrientId(entry: unknown): number | undefined {
+  if (!entry || typeof entry !== 'object') {
+    return undefined;
+  }
+
+  const base = entry as Record<string, unknown>;
+
+  const nutrientIdCandidate = base.nutrientId ?? base.nutrientID ?? base.nutrient_id;
+  const directNumberCandidate = base.nutrientNumber ?? base.number;
+  const nutrient = getRecord(base.nutrient);
+
+  return (
+    toFiniteNumber(nutrientIdCandidate) ??
+    toFiniteNumber(nutrient?.id ?? nutrient?.nutrientId) ??
+    toFiniteNumber(nutrient?.number) ??
+    toFiniteNumber(directNumberCandidate)
+  );
+}
+
+function resolveNutrientAmount(entry: unknown): number | undefined {
+  if (!entry || typeof entry !== 'object') {
+    return undefined;
+  }
+
+  const base = entry as Record<string, unknown>;
+  const nutrient = getRecord(base.nutrient);
+
+  return (
+    toFiniteNumber(base.amount ?? base.value ?? base.dataPoints) ??
+    toFiniteNumber(nutrient?.amount ?? nutrient?.value)
+  );
+}
+
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+}
+
+function describeMacroSummary(macros?: MacroSummary): string {
+  if (!macros) {
+    return '';
+  }
+
+  const parts: string[] = [];
+  if (macros.calories !== undefined) {
+    parts.push(`calories ${formatMacroValue(macros.calories, false)} kcal`);
+  }
+  if (macros.protein !== undefined) {
+    parts.push(`protein ${formatMacroValue(macros.protein)} g`);
+  }
+  if (macros.fat !== undefined) {
+    parts.push(`fat ${formatMacroValue(macros.fat)} g`);
+  }
+  if (macros.carbs !== undefined) {
+    parts.push(`carbs ${formatMacroValue(macros.carbs)} g`);
+  }
+
+  return parts.length ? `Macros per 100g: ${parts.join(', ')}.` : '';
+}
+
+function formatMacroValue(value: number, allowDecimals: boolean = true): string {
+  if (!allowDecimals) {
+    return Math.round(value).toString();
+  }
+
+  const rounded = Math.round(value * 100) / 100;
+  return rounded.toString();
+}
+
+function getRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+type FoodSummary = {
+  fdcId?: number;
+  description: string;
+  macros?: MacroSummary;
+};
+
+function toFoodSummary(food: FoodItem): FoodSummary {
+  const macros = extractMacroSummary(food);
+  const fdcId = extractFdcId(food);
+
+  return {
+    description: describeFood(food),
+    ...(fdcId !== undefined ? { fdcId } : {}),
+    ...(macros ? { macros } : {})
+  };
+}
+
+function extractFdcId(food: FoodItem): number | undefined {
+  const record = getRecord(food);
+  if (!record) {
+    return undefined;
+  }
+
+  return toFiniteNumber(record.fdcId ?? record.fdc_id);
 }

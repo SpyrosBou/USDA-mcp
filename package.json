@@ -4,6 +4,9 @@
   "description": "Model Context Protocol server exposing tools for the USDA FoodData Central API.",
   "type": "module",
   "main": "dist/server.js",
+  "bin": {
+    "usda-mcp": "./bin/usda-mcp.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "tsx src/server.ts",
