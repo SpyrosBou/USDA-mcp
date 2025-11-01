@@ -35,7 +35,7 @@ echo "USDA_API_KEY=your-key" >> .env
 npm run start   # runs via tsx with stdio transport
 ```
 
-The server exits immediately if `USDA_API_KEY` is missing or blank. When running under an MCP client, configure the variable through the client instead of using `.env`.
+The server exits immediately if `USDA_API_KEY` is missing or blank. When you hand the server off to an MCP client, have that client supply the variable instead of relying on `.env`.
 
 To run the compiled CLI (needed for Codex autostart):
 
@@ -61,10 +61,13 @@ You can provide these through `.env`, your shell, or the MCP client configuratio
 
 ## Running Under MCP Clients
 
-## MCP Client Configuration Templates
+Most MCP clients let you attach environment variables directly to a server definition. Provide `USDA_API_KEY` there so the USDA server runs regardless of your working directory. Only set `USDA_API_BASE_URL` when you need to hit a non-default endpoint.
+
+### Codex CLI (`~/.config/codex/config.toml`)
+
+Codex profiles accept per-server environment variables in TOML ([Codex configuration guide](https://github.com/openai/codex/blob/main/docs/config.md)).
 
 ```toml
-# Codex CLI (~/.config/codex/config.toml)
 experimental_use_rmcp_client = true
 
 [mcp_servers.usda_fooddata]
@@ -74,33 +77,42 @@ tool_timeout_sec = 60
 
 [mcp_servers.usda_fooddata.env]
 USDA_API_KEY = "your-fooddata-central-key"
-# Optional: env.USDA_API_BASE_URL = "https://api.nal.usda.gov/fdc/v1/"
+# Optional override if you proxy the API:
+# USDA_API_BASE_URL = "https://api.nal.usda.gov/fdc/v1/"
 ```
 
+### Claude Desktop (`claude_desktop_config.json`)
+
+Claude Desktop reads server definitions from `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS (see the [MCP introductory docs](https://modelcontextprotocol.io/modelcontextprotocol/typescript-sdk/refs/heads/main/README) for the format). Point to your built entry point and inject the key via `env`.
+
 ```jsonc
-// Claude Desktop (settings.json)
 {
   "mcpServers": {
-    "usda-fooddata": {
-      "command": "npm",
-      "args": ["run", "start"],
+    "usda": {
+      "command": "node",
+      "args": ["/Users/you/projects/USDA-mcp/dist/server.js"],
       "env": {
         "USDA_API_KEY": "your-fooddata-central-key"
+        // "USDA_API_BASE_URL": "https://api.nal.usda.gov/fdc/v1/"
       }
     }
   }
 }
 ```
 
+Re-run `npm run build` whenever you change the server so `dist/server.js` stays in sync.
+
+### Cursor IDE (`~/.cursor/mcp.json`)
+
+Cursor keeps MCP definitions in `~/.cursor/mcp.json`. Any server listed under `mcpServers` can set `env` (many server READMEs, including [Yandex Search](https://github.com/yandex/yandex-search-mcp-server/blob/main/readme.md), use the same layout).
+
 ```jsonc
-// Cursor IDE (~/.cursor/mcp.json)
 {
   "mcpServers": {
     "usda-fooddata": {
       "type": "stdio",
       "command": "node",
-      "args": ["dist/server.js"],
-      "cwd": "/Users/warui1/projects/USDA-mcp",
+      "args": ["/Users/you/projects/USDA-mcp/dist/server.js"],
       "env": {
         "USDA_API_KEY": "your-fooddata-central-key"
       },
@@ -111,14 +123,14 @@ USDA_API_KEY = "your-fooddata-central-key"
 }
 ```
 
+### Claude Code (`settings.json`)
+
 ```jsonc
-// Claude Code (settings.json)
 {
   "mcpServers": {
     "usda-fooddata": {
       "command": "node",
-      "args": ["dist/server.js"],
-      "cwd": "/Users/warui1/projects/USDA-mcp",
+      "args": ["/Users/you/projects/USDA-mcp/dist/server.js"],
       "env": {
         "USDA_API_KEY": "your-fooddata-central-key"
       },
@@ -128,14 +140,16 @@ USDA_API_KEY = "your-fooddata-central-key"
 }
 ```
 
+### Gemini CLI (`settings.json`)
+
+Gemini CLI merges MCP servers from system, user, and workspace settings ([Gemini CLI configuration](https://geminicli.com/docs/get-started/configuration-v1)).
+
 ```jsonc
-// Gemini CLI (user settings.json)
 {
   "mcpServers": {
     "usda-fooddata": {
       "command": "node",
-      "args": ["dist/server.js"],
-      "cwd": "/Users/warui1/projects/USDA-mcp",
+      "args": ["/Users/you/projects/USDA-mcp/dist/server.js"],
       "env": {
         "USDA_API_KEY": "your-fooddata-central-key"
       },
