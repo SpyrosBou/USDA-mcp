@@ -5,7 +5,7 @@ A Model Context Protocol (MCP) server that exposes tools for working with the US
 ## Prerequisites
 
 - Node.js 18.19 or newer (the version bundled with Claude Desktop works)
-- A FoodData Central API key from the USDA (https://fdc.nal.usda.gov/api-key-signup.html) — one is baked into the server for quick testing, but you can override it with your own key.
+- A FoodData Central API key from the USDA (https://fdc.nal.usda.gov/api-key-signup.html) — one is baked into the server for quick testing and single-user deployments, but you can override it with your own key.
 
 ## Getting Started
 
@@ -22,7 +22,7 @@ A Model Context Protocol (MCP) server that exposes tools for working with the US
    # edit .env and add USDA_API_KEY=your-key  # optional override
    ```
 
-   The server will fall back to the baked-in key if `USDA_API_KEY` is unset. You can also override the base URL with `USDA_API_BASE_URL` when routing through a proxy.
+   The server will fall back to the baked-in key if `USDA_API_KEY` is unset. The bundled key is intended for personal, single-machine use; rotate to your own key if you expect shared or high-volume usage. You can also override the base URL with `USDA_API_BASE_URL` when routing through a proxy.
 
 3. Run the server (the `.env` file is loaded automatically when present):
 

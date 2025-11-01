@@ -31,5 +31,5 @@
 
 ## Configuration Notes
 - Never commit `.env`; manage secrets via environment variables or workspace overrides.
-- When rotating the USDA API key, update `src/config.ts` defaults and reflect the change in `README.md` and this guide.
+- A baked-in USDA API key supports personal, single-machine workflows; if you rotate it or expect broader use, provide overrides and update `src/config.ts`, this guide, and `README.md`.
 - Keep sample configuration minimal so contributors can validate locally without exposing private keys.
