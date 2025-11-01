@@ -14,7 +14,7 @@ import { describeEnvironmentOverride, USDA_API_BASE_URL } from './config.js';
 
 const serverInstructions = [
   'Provides USDA FoodData Central search and lookup tools.',
-  'Uses a baked-in key for personal, single-machine use; set USDA_API_KEY to run with your own credentials when needed.',
+  'Requires USDA_API_KEY to be set in the environment (e.g., via MCP config env.USDA_API_KEY) before startup.',
   'Respect USDA rate limits by filtering queries and batching lookups.',
   'Expect structuredContent payloads for reliable downstream parsing.'
 ].join('\n');
@@ -33,15 +33,24 @@ server.server.registerCapabilities({
   logging: {}
 });
 
-const client = new FoodDataCentralClient({
-  logger: (message) => {
-    void server.sendLoggingMessage({
-      level: 'info',
-      logger: 'usda-fooddata-central',
-      data: message
-    });
-  }
-});
+let client: FoodDataCentralClient;
+
+try {
+  client = new FoodDataCentralClient({
+    logger: (message) => {
+      void server.sendLoggingMessage({
+        level: 'info',
+        logger: 'usda-fooddata-central',
+        data: message
+      });
+    }
+  });
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error('Failed to initialize USDA FoodData Central client.');
+  console.error(message);
+  process.exit(1);
+}
 
 const foodDataTypeSchema = z
   .enum(['Branded', 'Survey (FNDDS)', 'SR Legacy', 'Foundation', 'Experimental'])
@@ -543,8 +552,8 @@ function extractFdcId(food: FoodItem): number | undefined {
 
 function buildEnvironmentOverview(): string {
   const apiKeyStatus = process.env.USDA_API_KEY
-    ? 'Custom USDA_API_KEY detected in environment.'
-    : 'Using baked-in key intended for single-machine use.';
+    ? 'USDA_API_KEY detected in environment.'
+    : 'USDA_API_KEY missing — the server will fail to start until it is provided.';
   const baseUrl = process.env.USDA_API_BASE_URL ?? USDA_API_BASE_URL;
 
   return [
