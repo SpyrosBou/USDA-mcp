@@ -96,6 +96,15 @@ const DEFAULT_CURSOR_SIZES: Record<CursorTool, number> = {
   'list-foods': DEFAULT_LIST_PAGE_SIZE
 };
 
+const searchPreviewShape = {
+  fdcId: z.number(),
+  description: z.string(),
+  dataType: z.string().optional(),
+  brandOwner: z.string().optional()
+} satisfies ZodRawShape;
+
+const searchPreviewSchema = z.object(searchPreviewShape).strict();
+
 const foodSummaryShape = {
   description: z.string(),
   fdcId: z.number().optional(),
@@ -191,7 +200,7 @@ const searchFoodsOutputShape = {
       notes: z.array(z.string()).optional()
     })
     .strict(),
-  previews: z.array(foodSummarySchema),
+  previews: z.array(searchPreviewSchema),
   raw: z
     .object({
       foods: z.array(foodItemSchema),
@@ -248,6 +257,40 @@ const listFoodsOutputShape = {
   foods: z.array(foodItemSchema).optional()
 } satisfies ZodRawShape;
 
+const NUTRIENT_KEYS = ['calories', 'protein', 'fat', 'carbs', 'saturatedFat', 'fiber'] as const;
+
+const nutrientValueSchema = z
+  .object({
+    key: z.enum(NUTRIENT_KEYS),
+    label: z.string(),
+    unit: z.enum(['g', 'kcal']),
+    valuePer100g: z.number().nonnegative().optional(),
+    sourceNutrientId: z.number().optional()
+  })
+  .strict();
+
+const singleNutrientOutputShape = {
+  summary: z
+    .object({
+      fdcId: z.number(),
+      description: z.string(),
+      notes: z.array(z.string()).optional()
+    })
+    .strict(),
+  nutrient: nutrientValueSchema
+} satisfies ZodRawShape;
+
+const macroOnlyOutputShape = {
+  summary: z
+    .object({
+      fdcId: z.number(),
+      description: z.string(),
+      notes: z.array(z.string()).optional()
+    })
+    .strict(),
+  nutrients: z.array(nutrientValueSchema)
+} satisfies ZodRawShape;
+
 server.registerTool(
   'search-foods',
   {
@@ -271,7 +314,7 @@ server.registerTool(
   },
   async (input) => {
     const previewOnly = input.previewOnly ?? false;
-    const includeRaw = input.includeRaw ?? !previewOnly;
+    const includeRaw = input.includeRaw ?? false;
     const sampleSize = clampSampleSize(input.sampleSize);
     const estimateOnly = input.estimateOnly ?? false;
 
@@ -335,8 +378,8 @@ server.registerTool(
     };
 
     const results = await client.searchFoods(params);
-    const summaries = results.foods.map((food) => toFoodSummary(food));
-    const previewSummaries = summaries.slice(0, sampleSize);
+    const allPreviews = results.foods.map((food) => toSearchPreview(food));
+    const limitedPreviews = allPreviews.slice(0, sampleSize);
 
     const nextCursor =
       results.currentPage < results.totalPages
@@ -345,7 +388,7 @@ server.registerTool(
 
     const notes: string[] = [];
     if (previewOnly) {
-      notes.push(`Preview mode enabled; returning top ${previewSummaries.length} summaries.`);
+      notes.push(`Preview mode enabled; returning top ${limitedPreviews.length} matches.`);
     }
     if (!includeRaw) {
       notes.push('Raw USDA payload omitted to conserve context. Set includeRaw=true to include it.');
@@ -362,10 +405,14 @@ server.registerTool(
       }
     }
 
+    const previewCount = limitedPreviews.length;
+    const rawCount = results.foods.length;
+    const returnedCount = includeRaw ? rawCount : previewCount;
+
     const summary = {
       query: input.query,
       totalHits: results.totalHits,
-      returned: results.foods.length,
+      returned: returnedCount,
       page: results.currentPage,
       pageSize,
       totalPages: results.totalPages,
@@ -377,10 +424,10 @@ server.registerTool(
       `Search "${input.query}" matched ${results.totalHits} foods.`,
       `Page ${results.currentPage} of ${results.totalPages} (size ${pageSize}).`,
       previewOnly
-        ? `Previewing ${previewSummaries.length} items; set previewOnly=false for full page details.`
+        ? `Previewing ${previewCount} items; set previewOnly=false and includeRaw=true for full page details.`
         : includeRaw
-          ? `Returned ${results.foods.length} items this page.`
-          : `Returned ${previewSummaries.length} preview items; raw payload omitted (set includeRaw=true to include).`,
+          ? `Returned ${rawCount} items this page.`
+          : `Returned ${previewCount} preview items; set includeRaw=true to fetch the full page.`,
       nextCursor ? 'Next cursor available in structuredContent.summary.nextCursor.' : undefined
     ].filter((line): line is string => Boolean(line));
 
@@ -393,7 +440,7 @@ server.registerTool(
       ],
       structuredContent: {
         summary,
-        previews: previewSummaries,
+        previews: limitedPreviews,
         ...(rawPayload ? { raw: rawPayload } : {})
       }
     };
@@ -462,6 +509,114 @@ server.registerTool(
     };
   }
 );
+
+const macroNutrientKeys: NutrientKey[] = ['calories', 'protein', 'fat', 'carbs'];
+
+server.registerTool(
+  'get_macros',
+  {
+    title: 'Get Macros',
+    description:
+      'Return per 100 g calories, protein, total fat, and carbohydrates for a FoodData Central entry.',
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+      idempotentHint: true
+    },
+    inputSchema: {
+      fdcId: z.number().int().positive()
+    },
+    outputSchema: macroOnlyOutputShape,
+    _meta: {
+      version: '2025-07-01',
+      nutrientKeys: macroNutrientKeys,
+      nutrientIds: Array.from(
+        new Set<number>(
+          macroNutrientKeys.flatMap((key) => Array.from(NUTRIENT_DEFINITIONS[key].ids.values()))
+        )
+      )
+    }
+  },
+  async (input) => {
+    const { food, matches } = await fetchFoodForNutrients(input.fdcId, macroNutrientKeys);
+    const nutrientValues = macroNutrientKeys.map((key) => buildNutrientValue(key, matches[key]));
+    const missingLabels = nutrientValues
+      .filter((nutrient) => nutrient.valuePer100g === undefined)
+      .map((nutrient) => nutrient.label);
+    const notes = missingLabels.length
+      ? [`Missing values for: ${missingLabels.join(', ')}.`]
+      : [];
+
+    const summary = {
+      fdcId: input.fdcId,
+      description: describeFood(food),
+      ...(notes.length ? { notes } : {})
+    };
+
+    const headline = describeNutrientSeries(nutrientValues);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: `Per 100 g macros for ${summary.description}: ${headline}.`
+        }
+      ],
+      structuredContent: {
+        summary,
+        nutrients: nutrientValues
+      }
+    };
+  }
+);
+
+const singleNutrientTools: Array<{
+  name: string;
+  key: NutrientKey;
+  title: string;
+  description: string;
+}> = [
+  {
+    name: 'get_fats',
+    key: 'fat',
+    title: 'Get Total Fat',
+    description: 'Return per 100 g total fat for a FoodData Central entry.'
+  },
+  {
+    name: 'get_protein',
+    key: 'protein',
+    title: 'Get Protein',
+    description: 'Return per 100 g protein for a FoodData Central entry.'
+  },
+  {
+    name: 'get_carbs',
+    key: 'carbs',
+    title: 'Get Carbohydrates',
+    description: 'Return per 100 g carbohydrates for a FoodData Central entry.'
+  },
+  {
+    name: 'get_kcal',
+    key: 'calories',
+    title: 'Get Calories',
+    description: 'Return per 100 g calories for a FoodData Central entry.'
+  },
+  {
+    name: 'get_satfats',
+    key: 'saturatedFat',
+    title: 'Get Saturated Fat',
+    description: 'Return per 100 g saturated fat for a FoodData Central entry.'
+  },
+  {
+    name: 'get_fiber',
+    key: 'fiber',
+    title: 'Get Dietary Fiber',
+    description: 'Return per 100 g dietary fiber for a FoodData Central entry.'
+  }
+];
+
+for (const tool of singleNutrientTools) {
+  registerSingleNutrientTool(tool);
+}
 
 server.registerTool(
   'get-foods',
@@ -884,44 +1039,250 @@ type MacroSummary = {
   carbs?: number;
 };
 
-const MACRO_NUTRIENT_IDS: Record<keyof MacroSummary, ReadonlySet<number>> = {
-  calories: new Set([1008, 208]),
-  protein: new Set([1003, 203]),
-  fat: new Set([1004, 204]),
-  carbs: new Set([1005, 205])
+type NutrientKey = (typeof NUTRIENT_KEYS)[number];
+
+type NutrientMatch = {
+  value: number;
+  nutrientId?: number;
+};
+
+type NutrientValue = {
+  key: NutrientKey;
+  label: string;
+  unit: 'g' | 'kcal';
+  valuePer100g?: number;
+  sourceNutrientId?: number;
+};
+
+type NutrientDefinition = {
+  key: NutrientKey;
+  label: string;
+  unit: 'g' | 'kcal';
+  ids: ReadonlySet<number>;
+  names: ReadonlySet<string>;
+};
+
+const NUTRIENT_DEFINITIONS: Record<NutrientKey, NutrientDefinition> = {
+  calories: {
+    key: 'calories',
+    label: 'Calories',
+    unit: 'kcal',
+    ids: new Set([1008, 208]),
+    names: new Set(['energy', 'energy (atwater general factors)'].map((value) => value.toLowerCase()))
+  },
+  protein: {
+    key: 'protein',
+    label: 'Protein',
+    unit: 'g',
+    ids: new Set([1003, 203]),
+    names: new Set(['protein'].map((value) => value.toLowerCase()))
+  },
+  fat: {
+    key: 'fat',
+    label: 'Total fat',
+    unit: 'g',
+    ids: new Set([1004, 204]),
+    names: new Set(['total lipid (fat)', 'total fat'].map((value) => value.toLowerCase()))
+  },
+  carbs: {
+    key: 'carbs',
+    label: 'Carbohydrates',
+    unit: 'g',
+    ids: new Set([1005, 205]),
+    names: new Set(['carbohydrate, by difference', 'carbohydrates'].map((value) => value.toLowerCase()))
+  },
+  saturatedFat: {
+    key: 'saturatedFat',
+    label: 'Saturated fat',
+    unit: 'g',
+    ids: new Set([1258, 606]),
+    names: new Set(['fatty acids, total saturated', 'saturated fat'].map((value) => value.toLowerCase()))
+  },
+  fiber: {
+    key: 'fiber',
+    label: 'Dietary fiber',
+    unit: 'g',
+    ids: new Set([1079, 291]),
+    names: new Set(['fiber, total dietary', 'dietary fiber'].map((value) => value.toLowerCase()))
+  }
 };
 
 function extractMacroSummary(food: FoodItem): MacroSummary | undefined {
+  const matches = collectNutrients(food, ['calories', 'protein', 'fat', 'carbs']);
+  const summary: MacroSummary = {
+    ...(matches.calories ? { calories: matches.calories.value } : {}),
+    ...(matches.protein ? { protein: matches.protein.value } : {}),
+    ...(matches.fat ? { fat: matches.fat.value } : {}),
+    ...(matches.carbs ? { carbs: matches.carbs.value } : {})
+  };
+
+  return Object.values(summary).some((value) => value !== undefined) ? summary : undefined;
+}
+
+function extractNutrient(food: FoodItem, key: NutrientKey): NutrientMatch | undefined {
+  const matches = collectNutrients(food, [key]);
+  return matches[key];
+}
+
+function collectNutrients(
+  food: FoodItem,
+  keys: NutrientKey[]
+): Partial<Record<NutrientKey, NutrientMatch>> {
   const nutrients = (food as Record<string, unknown>)?.foodNutrients;
-  if (!Array.isArray(nutrients)) {
-    return undefined;
+  if (!Array.isArray(nutrients) || keys.length === 0) {
+    return {};
   }
 
-  const summary: MacroSummary = {};
+  const pending = new Set<NutrientKey>(keys);
+  const results: Partial<Record<NutrientKey, NutrientMatch>> = {};
 
   for (const entry of nutrients) {
-    const nutrientId = resolveNutrientId(entry);
-    if (nutrientId === undefined) {
-      continue;
+    if (pending.size === 0) {
+      break;
     }
 
+    const nutrientId = resolveNutrientId(entry);
+    const nutrientName = resolveNutrientName(entry);
     const amount = resolveNutrientAmount(entry);
+
     if (amount === undefined) {
       continue;
     }
 
-    if (MACRO_NUTRIENT_IDS.calories.has(nutrientId)) {
-      summary.calories ??= amount;
-    } else if (MACRO_NUTRIENT_IDS.protein.has(nutrientId)) {
-      summary.protein ??= amount;
-    } else if (MACRO_NUTRIENT_IDS.fat.has(nutrientId)) {
-      summary.fat ??= amount;
-    } else if (MACRO_NUTRIENT_IDS.carbs.has(nutrientId)) {
-      summary.carbs ??= amount;
+    for (const key of Array.from(pending)) {
+      const definition = NUTRIENT_DEFINITIONS[key];
+      const idMatches = nutrientId !== undefined && definition.ids.has(nutrientId);
+      const nameMatches = nutrientName !== undefined && definition.names.has(nutrientName);
+      if (!idMatches && !nameMatches) {
+        continue;
+      }
+
+      results[key] = {
+        value: amount,
+        ...(nutrientId !== undefined ? { nutrientId } : {})
+      };
+      pending.delete(key);
     }
   }
 
-  return Object.values(summary).some((value) => value !== undefined) ? summary : undefined;
+  return results;
+}
+
+function buildNutrientValue(key: NutrientKey, match?: NutrientMatch): NutrientValue {
+  const definition = NUTRIENT_DEFINITIONS[key];
+  return {
+    key,
+    label: definition.label,
+    unit: definition.unit,
+    ...(match ? { valuePer100g: match.value } : {}),
+    ...(match?.nutrientId !== undefined ? { sourceNutrientId: match.nutrientId } : {})
+  };
+}
+
+async function fetchFoodForNutrients(
+  fdcId: number,
+  keys: NutrientKey[]
+): Promise<{ food: FoodItem; matches: Partial<Record<NutrientKey, NutrientMatch>> }> {
+  const nutrientIds = new Set<number>();
+  for (const key of keys) {
+    for (const id of NUTRIENT_DEFINITIONS[key].ids) {
+      nutrientIds.add(id);
+    }
+  }
+
+  const options: FoodQueryOptions = {
+    format: 'abridged',
+    ...(nutrientIds.size ? { nutrients: Array.from(nutrientIds) } : {})
+  };
+
+  const food = await client.getFood(fdcId, options);
+  const matches = collectNutrients(food, keys);
+  return { food, matches };
+}
+
+function describeNutrientSeries(values: NutrientValue[]): string {
+  return values
+    .map((nutrient) => {
+      const amount = formatNutrientAmount(nutrient);
+      return amount ? `${nutrient.label} ${amount}` : `${nutrient.label} unavailable`;
+    })
+    .join('; ');
+}
+
+function describeSingleNutrientSentence(description: string, nutrient: NutrientValue): string {
+  const amount = formatNutrientAmount(nutrient);
+  if (!amount) {
+    return `${nutrient.label} unavailable for ${description}.`;
+  }
+  return `${nutrient.label} for ${description}: ${amount} per 100 g.`;
+}
+
+function formatNutrientAmount(nutrient: NutrientValue): string | undefined {
+  if (nutrient.valuePer100g === undefined) {
+    return undefined;
+  }
+  if (nutrient.unit === 'kcal') {
+    return `${formatMacroValue(nutrient.valuePer100g, false)} kcal`;
+  }
+  return `${formatMacroValue(nutrient.valuePer100g)} g`;
+}
+
+function registerSingleNutrientTool(config: {
+  name: string;
+  key: NutrientKey;
+  title: string;
+  description: string;
+}): void {
+  const definition = NUTRIENT_DEFINITIONS[config.key];
+  server.registerTool(
+    config.name,
+    {
+      title: config.title,
+      description: `${config.description} Returns a single value per 100 g to minimize context usage.`,
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+        idempotentHint: true
+      },
+      inputSchema: {
+        fdcId: z.number().int().positive()
+      },
+      outputSchema: singleNutrientOutputShape,
+      _meta: {
+        version: '2025-07-01',
+        nutrientKey: config.key,
+        nutrientLabel: definition.label,
+        nutrientIds: Array.from(definition.ids)
+      }
+    },
+    async (input) => {
+      const { food, matches } = await fetchFoodForNutrients(input.fdcId, [config.key]);
+      const nutrientMatch = matches[config.key];
+      const nutrientValue = buildNutrientValue(config.key, nutrientMatch);
+      const notes =
+        nutrientValue.valuePer100g === undefined
+          ? [`${definition.label} not available for this entry.`]
+          : [];
+      const summary = {
+        fdcId: input.fdcId,
+        description: describeFood(food),
+        ...(notes.length ? { notes } : {})
+      };
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: describeSingleNutrientSentence(summary.description, nutrientValue)
+          }
+        ],
+        structuredContent: {
+          summary,
+          nutrient: nutrientValue
+        }
+      };
+    }
+  );
 }
 
 function resolveNutrientId(entry: unknown): number | undefined {
@@ -941,6 +1302,31 @@ function resolveNutrientId(entry: unknown): number | undefined {
     toFiniteNumber(nutrient?.number) ??
     toFiniteNumber(directNumberCandidate)
   );
+}
+
+function resolveNutrientName(entry: unknown): string | undefined {
+  if (!entry || typeof entry !== 'object') {
+    return undefined;
+  }
+
+  const base = entry as Record<string, unknown>;
+  const nutrient = getRecord(base.nutrient);
+
+  const candidates = [
+    typeof base.nutrientName === 'string' ? base.nutrientName : undefined,
+    typeof base.nutrientDescription === 'string' ? base.nutrientDescription : undefined,
+    typeof nutrient?.name === 'string' ? nutrient.name : undefined,
+    typeof nutrient?.description === 'string' ? nutrient.description : undefined,
+    typeof nutrient?.displayName === 'string' ? nutrient.displayName : undefined
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim() !== '') {
+      return candidate.trim().toLowerCase();
+    }
+  }
+
+  return undefined;
 }
 
 function resolveNutrientAmount(entry: unknown): number | undefined {
@@ -1016,6 +1402,13 @@ type FoodSummary = {
   macros?: MacroSummary;
 };
 
+type SearchPreview = {
+  fdcId: number;
+  description: string;
+  dataType?: string;
+  brandOwner?: string;
+};
+
 function toFoodSummary(food: FoodItem): FoodSummary {
   const macros = extractMacroSummary(food);
   const fdcId = extractFdcId(food);
@@ -1032,6 +1425,32 @@ function toFoodSummary(food: FoodItem): FoodSummary {
     ...(brandOwner ? { brandOwner } : {}),
     ...(publishedDate ? { publishedDate } : {}),
     ...(macros ? { macros } : {})
+  };
+}
+
+function toSearchPreview(food: FoodItem): SearchPreview {
+  const record = getRecord(food);
+  const rawFdcId = record?.fdcId ?? record?.fdc_id;
+  const parsedFdcId = toFiniteNumber(rawFdcId);
+  if (parsedFdcId === undefined) {
+    throw new Error('Search result is missing an FDC ID.');
+  }
+
+  const description =
+    typeof record?.description === 'string'
+      ? record.description
+      : typeof record?.lowercaseDescription === 'string'
+        ? record.lowercaseDescription
+        : 'Food item';
+
+  const dataType = typeof record?.dataType === 'string' ? record.dataType : undefined;
+  const brandOwner = typeof record?.brandOwner === 'string' ? record.brandOwner : undefined;
+
+  return {
+    fdcId: parsedFdcId,
+    description,
+    ...(dataType ? { dataType } : {}),
+    ...(brandOwner ? { brandOwner } : {})
   };
 }
 

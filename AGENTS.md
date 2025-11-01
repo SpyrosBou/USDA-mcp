@@ -36,3 +36,4 @@
 - USDA requests are throttled (2 concurrent calls, ≥250 ms spacing) with up to two retries on HTTP 429/5xx or timeouts; adjust documentation if these limits move.
 - Keep sample configuration minimal so contributors can validate locally without exposing private keys.
 - Tool responses surface a `summary` block, `previews`, and optional raw payloads. Update the Zod schemas, documentation, and helper metadata together whenever tool arguments or output fields change.
+- Tools currently exposed: `search-foods`, `get-food`, `get-foods`, `list-foods`, `get_macros`, and the single-nutrient helpers `get_fats`, `get_protein`, `get_carbs`, `get_kcal`, `get_satfats`, `get_fiber`. Keep this list current when adding or removing capabilities.

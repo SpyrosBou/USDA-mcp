@@ -9,6 +9,7 @@ Model Context Protocol (MCP) server that exposes USDA FoodData Central search an
 - **Four ready-to-use tools** wrapping FoodData Central search, single-record lookup, bulk lookup, and paginated listing.
 - **Strict validation** with Zod schemas for inputs and outputs so LLMs can rely on structured results.
 - **Cursor-aware previews** let you dry-run calls, request compact summaries, and opt into raw payloads only when needed.
+- **Lean nutrient lookups** surface per-100 g calories, macros, saturated fat, and fiber through focused tools that accept just an FDC ID.
 - **Resilient HTTP client** with throttling, timeouts, and exponential backoff retries for USDA rate limits.
 - **Built-in environment resource** that describes the server configuration from inside your MCP client.
 
@@ -153,10 +154,12 @@ USDA_API_KEY = "your-fooddata-central-key"
 
 All tools return a plain-text summary plus a `structuredContent` payload with a `summary` object, compact `previews`, and (when requested) the raw USDA response. Use the preview and dry-run switches to conserve context until you know you need the full payload.
 
-- **`search-foods`** – Full-text search with nested `filters` (`dataTypes`, `brandOwner`, `ingredients`, `nutrientIds`, `requireAllWords`), cursor-friendly `pagination` (`page`/`size`/`cursor`), and `sort` controls. Toggle `previewOnly`, `includeRaw`, `sampleSize`, or `estimateOnly` to switch between dry-run estimates, compact previews, and full result sets. `structuredContent.summary` reports `totalHits`, `nextCursor`, and context warnings when the payload is large.
-- **`get-food`** – Fetch a single FoodData Central (FDC) record by ID with optional `format` and `nutrients` filters. The summary highlights macros (when present) and any notable gaps in the response.
-- **`get-foods`** – Bulk lookup for up to 50 FDC IDs in one call. Supports `previewOnly`, `includeRaw`, `sampleSize`, and `estimateOnly` so you can review lightweight previews before retrieving the full objects.
-- **`list-foods`** – Deterministic paginated listing that accepts optional `filters` (data types, brand owner), cursor-based `pagination`, `sort`, and the same preview/dry-run switches as `search-foods`. The summary returns the next cursor only when another page is likely available.
+- `search-foods` – Full-text search that only surfaces the food description, optional brand/data type, and `fdcId` so agents can pick an entry without excessive detail. Filters, cursor pagination, sort controls, and dry-run previews help shrink context impact.
+- `get-food` – Fetch a single FoodData Central (FDC) record by ID with optional `format` and `nutrients` filters. The summary highlights macros (when present) and any notable gaps in the response.
+- `get_macros` – Return per-100 g calories, protein, fat, and carbohydrates for a single FDC entry with structured nutrient metadata.
+- `get_fats`, `get_protein`, `get_carbs`, `get_kcal`, `get_satfats`, `get_fiber` – Single-nutrient lookups that emit just the requested per-100 g value (or note that it is unavailable) to keep tool output distinct.
+- `get-foods` – Bulk lookup for up to 50 FDC IDs in one call. Supports `previewOnly`, `includeRaw`, `sampleSize`, and `estimateOnly` so you can review lightweight previews before retrieving the full objects.
+- `list-foods` – Deterministic paginated listing that accepts optional `filters` (data types, brand owner), cursor-based `pagination`, `sort`, and the same preview/dry-run switches as `search-foods`. The summary returns the next cursor only when another page is likely available.
 
 ---
 
