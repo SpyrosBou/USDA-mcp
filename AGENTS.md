@@ -32,4 +32,6 @@
 ## Configuration Notes
 - Never commit `.env`; manage secrets via environment variables or workspace overrides.
 - A baked-in USDA API key supports personal, single-machine workflows; if you rotate it or expect broader use, provide overrides and update `src/config.ts`, this guide, and `README.md`.
+- `config://usda-fooddata/environment` exposes configuration and operational guidance as a read-only MCP resource—keep it accurate when defaults change.
+- USDA requests are throttled (2 concurrent calls, ≥250 ms spacing) with up to two retries on HTTP 429/5xx or timeouts; adjust documentation if these limits move.
 - Keep sample configuration minimal so contributors can validate locally without exposing private keys.

@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
+import { z, type ZodRawShape } from 'zod';
 
 import {
   FoodDataCentralClient,
@@ -10,13 +10,38 @@ import {
   ListFoodsRequest,
   SearchFoodsRequest
 } from './usdaClient.js';
+import { describeEnvironmentOverride, USDA_API_BASE_URL } from './config.js';
 
-const server = new McpServer({
-  name: 'usda-fooddata-central',
-  version: '0.1.0'
+const serverInstructions = [
+  'Provides USDA FoodData Central search and lookup tools.',
+  'Uses a baked-in key for personal, single-machine use; set USDA_API_KEY to run with your own credentials when needed.',
+  'Respect USDA rate limits by filtering queries and batching lookups.',
+  'Expect structuredContent payloads for reliable downstream parsing.'
+].join('\n');
+
+const server = new McpServer(
+  {
+    name: 'usda-fooddata-central',
+    version: '0.1.0'
+  },
+  {
+    instructions: serverInstructions
+  }
+);
+
+server.server.registerCapabilities({
+  logging: {}
 });
 
-const client = new FoodDataCentralClient();
+const client = new FoodDataCentralClient({
+  logger: (message) => {
+    void server.sendLoggingMessage({
+      level: 'info',
+      logger: 'usda-fooddata-central',
+      data: message
+    });
+  }
+});
 
 const foodDataTypeSchema = z
   .enum(['Branded', 'Survey (FNDDS)', 'SR Legacy', 'Foundation', 'Experimental'])
@@ -28,11 +53,54 @@ const nutrientIdsSchema = z
   .max(25)
   .describe('List of nutrient IDs to include (per API documentation).');
 
+const macroSummaryShape = {
+  calories: z.number().optional(),
+  protein: z.number().optional(),
+  fat: z.number().optional(),
+  carbs: z.number().optional()
+} satisfies ZodRawShape;
+
+const macroSummarySchema = z.object(macroSummaryShape).strict();
+
+const foodItemSchema = z.record(z.string(), z.unknown());
+
+const foodSummaryShape = {
+  description: z.string(),
+  fdcId: z.number().optional(),
+  macros: macroSummarySchema.optional()
+} satisfies ZodRawShape;
+
+const foodSummarySchema = z.object(foodSummaryShape).strict();
+
+const searchFoodsOutputShape = {
+  results: z
+    .object({
+      foods: z.array(foodItemSchema),
+      totalHits: z.number(),
+      currentPage: z.number(),
+      totalPages: z.number(),
+      pageList: z.array(z.number())
+    })
+    .passthrough(),
+  summaries: z.array(foodSummarySchema)
+} satisfies ZodRawShape;
+
+const getFoodOutputShape = {
+  food: foodItemSchema,
+  macros: macroSummarySchema.optional()
+} satisfies ZodRawShape;
+
+const bulkFoodsOutputShape = {
+  foods: z.array(foodItemSchema),
+  summaries: z.array(foodSummarySchema)
+} satisfies ZodRawShape;
+
 server.registerTool(
   'search-foods',
   {
     title: 'Search Foods',
-    description: 'Search the USDA FoodData Central database using keywords and optional filters.',
+    description:
+      'Full-text search of USDA FoodData Central; best when you need discovery across brands or ingredients. Supports pagination, sorting, data type filters, macro nutrient ID filters, and brand owner narrowing. Returns structured summaries and the raw API payload.',
     inputSchema: {
       query: z.string().min(1, 'Query is required'),
       dataType: z.array(foodDataTypeSchema).max(5).optional(),
@@ -44,7 +112,8 @@ server.registerTool(
       requireAllWords: z.boolean().optional(),
       ingredients: z.string().min(1).optional(),
       nutrients: nutrientIdsSchema.optional()
-    }
+    },
+    outputSchema: searchFoodsOutputShape
   },
   async (input) => {
     const params: SearchFoodsRequest = {
@@ -85,12 +154,14 @@ server.registerTool(
   'get-food',
   {
     title: 'Get Food Details',
-    description: 'Retrieve detailed information for a food by its FDC ID.',
+    description:
+      'Look up a single FoodData Central (FDC) record by numeric ID. Supports abridged/full detail toggles and nutrient ID subsets to trim responses. Ideal once you already know the identifier.',
     inputSchema: {
       fdcId: z.number().int().positive(),
       format: z.enum(['abridged', 'full']).optional(),
       nutrients: nutrientIdsSchema.optional()
-    }
+    },
+    outputSchema: getFoodOutputShape
   },
   async (input) => {
     const options: FoodQueryOptions = {
@@ -121,12 +192,14 @@ server.registerTool(
   'get-foods',
   {
     title: 'Get Multiple Foods',
-    description: 'Fetch multiple foods in a single request by providing a list of FDC IDs.',
+    description:
+      'Batch lookup for multiple FDC IDs via the USDA bulk endpoint. Provide up to 50 IDs to reduce repeated network calls. Supports abridged/full detail and nutrient filters per the API.',
     inputSchema: {
       fdcIds: z.array(z.number().int().positive()).min(1).max(50),
       format: z.enum(['abridged', 'full']).optional(),
       nutrients: nutrientIdsSchema.optional()
-    }
+    },
+    outputSchema: bulkFoodsOutputShape
   },
   async (input) => {
     const foods = await client.getFoods({
@@ -160,7 +233,7 @@ server.registerTool(
   {
     title: 'List Foods',
     description:
-      'Page through foods with optional filters by data type, brand owner, and sort options.',
+      'Page-oriented listing endpoint for predictable iteration when you already know the data type or brand. Supports pagination, sorting, and brand filters, returning summaries for quick scanning.',
     inputSchema: {
       dataType: z.array(foodDataTypeSchema).max(5).optional(),
       pageNumber: z.number().int().min(1).max(200).optional(),
@@ -168,7 +241,8 @@ server.registerTool(
       sortBy: z.enum(['dataType.keyword', 'lowercaseDescription.keyword', 'publishedDate']).optional(),
       sortOrder: z.enum(['asc', 'desc']).optional(),
       brandOwner: z.string().min(1).optional()
-    }
+    },
+    outputSchema: bulkFoodsOutputShape
   },
   async (input) => {
     const params: ListFoodsRequest = {
@@ -198,6 +272,24 @@ server.registerTool(
       }
     };
   }
+);
+
+server.registerResource(
+  'usda-environment',
+  'config://usda-fooddata/environment',
+  {
+    title: 'USDA FoodData Server Environment',
+    description: 'Summarises configuration defaults, overrides, and operational guidance for this MCP server.',
+    mimeType: 'text/markdown'
+  },
+  async (uri) => ({
+    contents: [
+      {
+        uri: uri.href,
+        text: buildEnvironmentOverview()
+      }
+    ]
+  })
 );
 
 async function main(): Promise<void> {
@@ -447,4 +539,24 @@ function extractFdcId(food: FoodItem): number | undefined {
   }
 
   return toFiniteNumber(record.fdcId ?? record.fdc_id);
+}
+
+function buildEnvironmentOverview(): string {
+  const apiKeyStatus = process.env.USDA_API_KEY
+    ? 'Custom USDA_API_KEY detected in environment.'
+    : 'Using baked-in key intended for single-machine use.';
+  const baseUrl = process.env.USDA_API_BASE_URL ?? USDA_API_BASE_URL;
+
+  return [
+    '# USDA FoodData Central MCP Environment',
+    '',
+    `- Base URL: ${baseUrl}`,
+    `- API key mode: ${apiKeyStatus}`,
+    '- Request policy: up to 2 concurrent USDA calls with ≥250ms spacing and up to 2 exponential backoff retries on HTTP 429/5xx or timeouts.',
+    '- Timeout: Each request aborts after 30s to keep the server responsive.',
+    '',
+    describeEnvironmentOverride(),
+    '',
+    'Set USDA_API_BASE_URL to point at a proxy or alternate API host when needed.'
+  ].join('\n');
 }

@@ -70,6 +70,10 @@ The server registers four tools, each mirroring a FoodData Central endpoint.
 
 Each tool validates arguments with Zod schemas before calling the USDA API. Results are returned as structured content so clients can inspect exact field values.
 
+## Available Resources
+
+- `config://usda-fooddata/environment` – Markdown summary describing the active base URL, API key mode, retry/throttle settings, and environment overrides.
+
 ## MCP Client Configuration
 
 Add an entry similar to the following to your MCP client configuration (example for Claude Desktop):
@@ -96,6 +100,7 @@ Adjust the `command` and `args` if your client prefers a direct Node.js invocati
 ## Notes on the USDA API
 
 - Rate limits apply per API key. Reuse responses or narrow searches when possible.
+- Outbound USDA calls are throttled (2 concurrent requests with 250 ms spacing) and will auto-retry up to twice on HTTP 429/5xx or timeouts using exponential backoff.
 - Nutrient filters use numerical nutrient IDs. Refer to the USDA documentation for the full list.
 - The API occasionally returns empty arrays when a filter combination has no matches; the tools return a plain summary message alongside the structured response so the LLM understands the outcome.
 
