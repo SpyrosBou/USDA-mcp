@@ -259,6 +259,61 @@ const listFoodsOutputShape = {
 
 const NUTRIENT_KEYS = ['calories', 'protein', 'fat', 'carbs', 'saturatedFat', 'fiber'] as const;
 
+type NutrientKey = (typeof NUTRIENT_KEYS)[number];
+
+type NutrientDefinition = {
+  key: NutrientKey;
+  label: string;
+  unit: 'g' | 'kcal';
+  ids: ReadonlySet<number>;
+  names: ReadonlySet<string>;
+};
+
+const NUTRIENT_DEFINITIONS: Record<NutrientKey, NutrientDefinition> = {
+  calories: {
+    key: 'calories',
+    label: 'Calories',
+    unit: 'kcal',
+    ids: new Set([1008, 208]),
+    names: new Set(['energy', 'energy (atwater general factors)'].map((value) => value.toLowerCase()))
+  },
+  protein: {
+    key: 'protein',
+    label: 'Protein',
+    unit: 'g',
+    ids: new Set([1003, 203]),
+    names: new Set(['protein'].map((value) => value.toLowerCase()))
+  },
+  fat: {
+    key: 'fat',
+    label: 'Total fat',
+    unit: 'g',
+    ids: new Set([1004, 204]),
+    names: new Set(['total lipid (fat)', 'total fat'].map((value) => value.toLowerCase()))
+  },
+  carbs: {
+    key: 'carbs',
+    label: 'Carbohydrates',
+    unit: 'g',
+    ids: new Set([1005, 205]),
+    names: new Set(['carbohydrate, by difference', 'carbohydrates'].map((value) => value.toLowerCase()))
+  },
+  saturatedFat: {
+    key: 'saturatedFat',
+    label: 'Saturated fat',
+    unit: 'g',
+    ids: new Set([1258, 606]),
+    names: new Set(['fatty acids, total saturated', 'saturated fat'].map((value) => value.toLowerCase()))
+  },
+  fiber: {
+    key: 'fiber',
+    label: 'Dietary fiber',
+    unit: 'g',
+    ids: new Set([1079, 291]),
+    names: new Set(['fiber, total dietary', 'dietary fiber'].map((value) => value.toLowerCase()))
+  }
+};
+
 const nutrientValueSchema = z
   .object({
     key: z.enum(NUTRIENT_KEYS),
@@ -1039,8 +1094,6 @@ type MacroSummary = {
   carbs?: number;
 };
 
-type NutrientKey = (typeof NUTRIENT_KEYS)[number];
-
 type NutrientMatch = {
   value: number;
   nutrientId?: number;
@@ -1052,59 +1105,6 @@ type NutrientValue = {
   unit: 'g' | 'kcal';
   valuePer100g?: number;
   sourceNutrientId?: number;
-};
-
-type NutrientDefinition = {
-  key: NutrientKey;
-  label: string;
-  unit: 'g' | 'kcal';
-  ids: ReadonlySet<number>;
-  names: ReadonlySet<string>;
-};
-
-const NUTRIENT_DEFINITIONS: Record<NutrientKey, NutrientDefinition> = {
-  calories: {
-    key: 'calories',
-    label: 'Calories',
-    unit: 'kcal',
-    ids: new Set([1008, 208]),
-    names: new Set(['energy', 'energy (atwater general factors)'].map((value) => value.toLowerCase()))
-  },
-  protein: {
-    key: 'protein',
-    label: 'Protein',
-    unit: 'g',
-    ids: new Set([1003, 203]),
-    names: new Set(['protein'].map((value) => value.toLowerCase()))
-  },
-  fat: {
-    key: 'fat',
-    label: 'Total fat',
-    unit: 'g',
-    ids: new Set([1004, 204]),
-    names: new Set(['total lipid (fat)', 'total fat'].map((value) => value.toLowerCase()))
-  },
-  carbs: {
-    key: 'carbs',
-    label: 'Carbohydrates',
-    unit: 'g',
-    ids: new Set([1005, 205]),
-    names: new Set(['carbohydrate, by difference', 'carbohydrates'].map((value) => value.toLowerCase()))
-  },
-  saturatedFat: {
-    key: 'saturatedFat',
-    label: 'Saturated fat',
-    unit: 'g',
-    ids: new Set([1258, 606]),
-    names: new Set(['fatty acids, total saturated', 'saturated fat'].map((value) => value.toLowerCase()))
-  },
-  fiber: {
-    key: 'fiber',
-    label: 'Dietary fiber',
-    unit: 'g',
-    ids: new Set([1079, 291]),
-    names: new Set(['fiber, total dietary', 'dietary fiber'].map((value) => value.toLowerCase()))
-  }
 };
 
 function extractMacroSummary(food: FoodItem): MacroSummary | undefined {
