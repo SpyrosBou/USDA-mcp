@@ -1,6 +1,6 @@
 {
   "name": "usda-mcp-server",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Model Context Protocol server exposing tools for the USDA FoodData Central API.",
   "type": "module",
   "main": "dist/server.js",
