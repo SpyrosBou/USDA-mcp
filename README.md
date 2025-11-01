@@ -42,6 +42,9 @@ To run the compiled CLI (needed for Codex autostart):
 ```bash
 npm run build
 npx usda-mcp            # assumes USDA_API_KEY is exported or supplied by the client
+# Optional: install the CLI globally so `usda-mcp` is on your PATH
+# npm install --global .
+# (or run `npm link` inside the repo)
 ```
 
 ---
@@ -67,6 +70,11 @@ Most MCP clients let you attach environment variables directly to a server defin
 
 Codex profiles accept per-server environment variables in TOML ([Codex configuration guide](https://github.com/openai/codex/blob/main/docs/config.md)).
 
+Use whichever `command` style matches your setup:
+
+- `command = "usda-mcp"` if you ran `npm install --global .` (or `npm link`) so the CLI is on your `PATH`.
+- `command = "node"` with `args = ["/absolute/path/to/dist/server.js"]` if you prefer not to install the package globally.
+
 ```toml
 experimental_use_rmcp_client = true
 
@@ -74,6 +82,9 @@ experimental_use_rmcp_client = true
 command = "usda-mcp"
 startup_timeout_sec = 20
 tool_timeout_sec = 60
+# If the CLI is not on your PATH:
+# command = "node"
+# args = ["/Users/you/projects/USDA-mcp/dist/server.js"]
 
 [mcp_servers.usda_fooddata.env]
 USDA_API_KEY = "your-fooddata-central-key"
