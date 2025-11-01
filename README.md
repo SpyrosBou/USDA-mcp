@@ -8,6 +8,7 @@ Model Context Protocol (MCP) server that exposes USDA FoodData Central search an
 
 - **Four ready-to-use tools** wrapping FoodData Central search, single-record lookup, bulk lookup, and paginated listing.
 - **Strict validation** with Zod schemas for inputs and outputs so LLMs can rely on structured results.
+- **Cursor-aware previews** let you dry-run calls, request compact summaries, and opt into raw payloads only when needed.
 - **Resilient HTTP client** with throttling, timeouts, and exponential backoff retries for USDA rate limits.
 - **Built-in environment resource** that describes the server configuration from inside your MCP client.
 
@@ -150,12 +151,12 @@ USDA_API_KEY = "your-fooddata-central-key"
 
 ## Tools
 
-All tools return a plain-text summary plus a `structuredContent` payload that matches the defined Zod schema.
+All tools return a plain-text summary plus a `structuredContent` payload with a `summary` object, compact `previews`, and (when requested) the raw USDA response. Use the preview and dry-run switches to conserve context until you know you need the full payload.
 
-- **`search-foods`** – Full-text search with filters for data type, brand owner, ingredients, and optional nutrient ID constraints. Supports pagination and sorting.
-- **`get-food`** – Fetch a single FoodData Central (FDC) record by ID, with optional `format` and `nutrients` arguments. Returns parsed macro-nutrient summaries when present.
-- **`get-foods`** – Bulk lookup for up to 50 FDC IDs in one call to reduce chatter.
-- **`list-foods`** – Page through foods when you already know the target data types or brand owners.
+- **`search-foods`** – Full-text search with nested `filters` (`dataTypes`, `brandOwner`, `ingredients`, `nutrientIds`, `requireAllWords`), cursor-friendly `pagination` (`page`/`size`/`cursor`), and `sort` controls. Toggle `previewOnly`, `includeRaw`, `sampleSize`, or `estimateOnly` to switch between dry-run estimates, compact previews, and full result sets. `structuredContent.summary` reports `totalHits`, `nextCursor`, and context warnings when the payload is large.
+- **`get-food`** – Fetch a single FoodData Central (FDC) record by ID with optional `format` and `nutrients` filters. The summary highlights macros (when present) and any notable gaps in the response.
+- **`get-foods`** – Bulk lookup for up to 50 FDC IDs in one call. Supports `previewOnly`, `includeRaw`, `sampleSize`, and `estimateOnly` so you can review lightweight previews before retrieving the full objects.
+- **`list-foods`** – Deterministic paginated listing that accepts optional `filters` (data types, brand owner), cursor-based `pagination`, `sort`, and the same preview/dry-run switches as `search-foods`. The summary returns the next cursor only when another page is likely available.
 
 ---
 
