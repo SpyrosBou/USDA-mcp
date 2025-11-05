@@ -179,10 +179,21 @@ export class FoodDataCentralClient {
   }
 
   async getFood(fdcId: number, options?: FoodQueryOptions): Promise<FoodItem> {
-    return this.get<FoodItem>(`food/${fdcId}`, {
-      ...(options?.format ? { format: options.format } : undefined),
-      ...(options?.nutrients ? { nutrients: options.nutrients } : undefined)
+    const foods = await this.getFoods({
+      fdcIds: [fdcId],
+      format: options?.format,
+      nutrients: options?.nutrients
     });
+
+    const food = foods[0];
+    if (!food) {
+      throw new FoodDataCentralError(`FDC ID ${fdcId} not found`, {
+        status: 404,
+        retryable: false
+      });
+    }
+
+    return food;
   }
 
   async getFoods(params: BulkFoodsRequest): Promise<FoodItem[]> {
@@ -192,7 +203,8 @@ export class FoodDataCentralClient {
       nutrients: params.nutrients
     });
 
-    return this.post<FoodItem[]>('foods', payload);
+    const response = await this.post<unknown>('foods', payload);
+    return normalizeBulkFoodsResponse(response);
   }
 
   async listFoods(params: ListFoodsRequest): Promise<ListFoodsResponse> {
@@ -374,4 +386,38 @@ function delay(ms: number): Promise<void> {
 
 function isRetryableStatus(status: number): boolean {
   return status === 429 || (status >= 500 && status < 600);
+}
+
+function normalizeBulkFoodsResponse(response: unknown): FoodItem[] {
+  if (Array.isArray(response)) {
+    return response as FoodItem[];
+  }
+
+  if (isRecord(response)) {
+    const foods = response.foods;
+    if (Array.isArray(foods)) {
+      return foods as FoodItem[];
+    }
+  }
+
+  throw new FoodDataCentralError('Unexpected USDA bulk foods response format', {
+    responseBody: safeSerialize(response),
+    retryable: false
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function safeSerialize(value: unknown): string {
+  try {
+    const serialized = JSON.stringify(value);
+    if (typeof serialized !== 'string') {
+      return '';
+    }
+    return serialized.length > 2000 ? `${serialized.slice(0, 2000)}…` : serialized;
+  } catch (error) {
+    return error instanceof Error ? error.message : '';
+  }
 }

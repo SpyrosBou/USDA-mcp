@@ -743,8 +743,22 @@ server.registerTool(
 
     const summaries = foods.map((food) => toFoodSummary(food));
     const previewSummaries = summaries.slice(0, sampleSize);
+    const returnedIds = new Set<number>(
+      summaries
+        .map((summary) => summary.fdcId)
+        .filter((fdcId): fdcId is number => typeof fdcId === 'number')
+    );
+    const missingFdcIds = input.fdcIds.filter((id) => !returnedIds.has(id));
 
     const notes: string[] = [];
+    if (missingFdcIds.length) {
+      const preview = missingFdcIds.slice(0, 5).join(', ');
+      notes.push(
+        missingFdcIds.length > 5
+          ? `USDA did not return ${missingFdcIds.length} requested IDs (${preview}…).`
+          : `USDA did not return: ${preview}.`
+      );
+    }
     if (previewOnly) {
       notes.push(`Preview mode enabled; returning ${previewSummaries.length} summaries.`);
     }
