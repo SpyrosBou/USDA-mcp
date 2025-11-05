@@ -16,7 +16,7 @@ import { describeEnvironmentOverride, USDA_API_BASE_URL } from './config.js';
 const serverInstructions = [
   'Provides USDA FoodData Central search and lookup tools.',
   'Requires USDA_API_KEY to be set in the environment (e.g., via MCP config env.USDA_API_KEY) before startup.',
-  'Respect USDA rate limits by filtering queries and batching lookups.',
+  'Respect USDA rate limits: at most one live request at a time with ≥400ms spacing (≈3 requests/second ceiling), so batch lookups thoughtfully.',
   'Expect structuredContent payloads for reliable downstream parsing.'
 ].join('\n');
 
@@ -364,7 +364,7 @@ server.registerTool(
       supportsCursor: true,
       supportsPreview: true,
       supportsDryRun: true,
-      rateLimitPolicy: '≤2 concurrent USDA calls, ≥250ms spacing, 2 retries'
+      rateLimitPolicy: '≤1 concurrent USDA call, ≥400ms spacing, 2 retries'
     }
   },
   async (input) => {
@@ -524,7 +524,7 @@ server.registerTool(
       expectedLatencyMs: 750,
       supportsPreview: false,
       supportsDryRun: false,
-      rateLimitPolicy: '≤2 concurrent USDA calls, ≥250ms spacing, 2 retries'
+      rateLimitPolicy: '≤1 concurrent USDA call, ≥400ms spacing, 2 retries'
     }
   },
   async (input) => {
@@ -698,7 +698,7 @@ server.registerTool(
       version: '2025-07-01',
       supportsPreview: true,
       supportsDryRun: true,
-      rateLimitPolicy: '≤2 concurrent USDA calls, ≥250ms spacing, 2 retries'
+      rateLimitPolicy: '≤1 concurrent USDA call, ≥400ms spacing, 2 retries'
     }
   },
   async (input) => {
@@ -814,7 +814,7 @@ server.registerTool(
       supportsCursor: true,
       supportsPreview: true,
       supportsDryRun: true,
-      rateLimitPolicy: '≤2 concurrent USDA calls, ≥250ms spacing, 2 retries'
+      rateLimitPolicy: '≤1 concurrent USDA call, ≥400ms spacing, 2 retries'
     }
   },
   async (input) => {
@@ -1488,7 +1488,7 @@ function buildEnvironmentOverview(): string {
     '',
     `- Base URL: ${baseUrl}`,
     `- API key mode: ${apiKeyStatus}`,
-    '- Request policy: up to 2 concurrent USDA calls with ≥250ms spacing and up to 2 exponential backoff retries on HTTP 429/5xx or timeouts.',
+    '- Request policy: up to 1 concurrent USDA call with ≥400ms spacing and up to 2 exponential backoff retries on HTTP 429/5xx or timeouts.',
     '- Timeout: Each request aborts after 30s to keep the server responsive.',
     '',
     describeEnvironmentOverride(),

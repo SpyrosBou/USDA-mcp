@@ -5,8 +5,8 @@ type QueryValue = string | number | boolean | Array<string | number | boolean>;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RETRIES = 2;
 const DEFAULT_RETRY_DELAY_MS = 750;
-const DEFAULT_MAX_CONCURRENT_REQUESTS = 2;
-const DEFAULT_MIN_REQUEST_INTERVAL_MS = 250;
+const DEFAULT_MAX_CONCURRENT_REQUESTS = 1;
+const DEFAULT_MIN_REQUEST_INTERVAL_MS = 400;
 
 const enum HttpMethod {
   GET = 'GET',
@@ -125,13 +125,18 @@ export class FoodDataCentralError extends Error {
   readonly status?: number;
   readonly responseBody?: string;
   readonly retryable: boolean;
+  readonly retryAfterMs?: number;
 
-  constructor(message: string, options?: { status?: number; responseBody?: string; retryable?: boolean; cause?: unknown }) {
+  constructor(
+    message: string,
+    options?: { status?: number; responseBody?: string; retryable?: boolean; retryAfterMs?: number; cause?: unknown }
+  ) {
     super(message);
     this.name = 'FoodDataCentralError';
     this.status = options?.status;
     this.responseBody = options?.responseBody;
     this.retryable = options?.retryable ?? false;
+    this.retryAfterMs = options?.retryAfterMs;
     if (options?.cause !== undefined) {
       // Assign cause for better stack traces when supported.
       (this as { cause?: unknown }).cause = options.cause;
@@ -199,7 +204,7 @@ export class FoodDataCentralClient {
   async getFoods(params: BulkFoodsRequest): Promise<FoodItem[]> {
     const payload = pruneUndefined({
       fdcIds: params.fdcIds,
-      format: params.format,
+      format: params.format ?? 'abridged',
       nutrients: params.nutrients
     });
 
@@ -323,17 +328,32 @@ export class FoodDataCentralClient {
 
       if (!response.ok) {
         const errorText = await safeReadText(response);
+        const retryAfterMs = parseRetryAfterMs(response.headers);
+        const bodyDetails = parseUsdaErrorBody(errorText);
+        const enhancedMessage = describeHttpFailure(response.status, response.statusText, retryAfterMs, bodyDetails);
         throw new FoodDataCentralError(
-          `FoodData Central request failed: ${response.status} ${response.statusText}`,
+          enhancedMessage,
           {
             status: response.status,
             responseBody: errorText,
-            retryable: isRetryableStatus(response.status)
+            retryable: isRetryableStatus(response.status),
+            retryAfterMs
           }
         );
       }
 
-      return (await response.json()) as T;
+      const data = (await response.json()) as unknown;
+      const bodyError = detectUsdaErrorEnvelope(data, response.status);
+      if (bodyError) {
+        throw new FoodDataCentralError(bodyError.message, {
+          status: bodyError.status ?? response.status,
+          responseBody: safeSerialize(bodyError.rawPayload),
+          retryable: bodyError.retryable,
+          retryAfterMs: bodyError.retryAfterMs
+        });
+      }
+
+      return data as T;
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new FoodDataCentralError('FoodData Central request timed out', { retryable: true, cause: error });
@@ -398,6 +418,19 @@ function normalizeBulkFoodsResponse(response: unknown): FoodItem[] {
     if (Array.isArray(foods)) {
       return foods as FoodItem[];
     }
+
+    if (isRecord(response.error)) {
+      const code = typeof response.error.code === 'string' ? response.error.code : undefined;
+      const message = typeof response.error.message === 'string' ? response.error.message : 'USDA error response';
+      throw new FoodDataCentralError(code ? `USDA error ${code}: ${message}` : message, {
+        retryable: code === 'OVER_RATE_LIMIT',
+        responseBody: safeSerialize(response)
+      });
+    }
+
+    if (Object.keys(response).length === 0) {
+      return [];
+    }
   }
 
   throw new FoodDataCentralError('Unexpected USDA bulk foods response format', {
@@ -420,4 +453,116 @@ function safeSerialize(value: unknown): string {
   } catch (error) {
     return error instanceof Error ? error.message : '';
   }
+}
+
+function parseRetryAfterMs(headers: { get(name: string): string | null }): number | undefined {
+  const header = headers.get('Retry-After');
+  if (!header) {
+    return undefined;
+  }
+
+  const seconds = Number(header);
+  if (!Number.isNaN(seconds)) {
+    return Math.max(0, seconds * 1000);
+  }
+
+  const date = Date.parse(header);
+  if (Number.isNaN(date)) {
+    return undefined;
+  }
+
+  return Math.max(0, date - Date.now());
+}
+
+function parseUsdaErrorBody(payload: string): { code?: string; message?: string } | undefined {
+  if (!payload) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(payload);
+    if (isRecord(parsed) && isRecord(parsed.error)) {
+      const code = typeof parsed.error.code === 'string' ? parsed.error.code : undefined;
+      const message = typeof parsed.error.message === 'string' ? parsed.error.message : undefined;
+      return { code, message };
+    }
+  } catch {
+    // fall through
+  }
+
+  return undefined;
+}
+
+function detectUsdaErrorEnvelope(
+  payload: unknown,
+  fallbackStatus?: number
+): { message: string; status?: number; retryable: boolean; rawPayload: unknown; retryAfterMs?: number } | undefined {
+  if (!isRecord(payload)) {
+    return undefined;
+  }
+
+  if (!isRecord(payload.error)) {
+    return undefined;
+  }
+
+  const code = typeof payload.error.code === 'string' ? payload.error.code : undefined;
+  const message =
+    typeof payload.error.message === 'string'
+      ? payload.error.message
+      : typeof payload.error.description === 'string'
+        ? payload.error.description
+        : 'FoodData Central request failed.';
+
+  const status =
+    typeof payload.error.status === 'number'
+      ? payload.error.status
+      : typeof payload.error.httpStatus === 'number'
+        ? payload.error.httpStatus
+        : undefined;
+
+  const effectiveStatus = status ?? fallbackStatus;
+  const retryable =
+    code === 'OVER_RATE_LIMIT' ||
+    (typeof effectiveStatus === 'number' ? isRetryableStatus(effectiveStatus) : false);
+
+  return {
+    message: code ? `USDA error ${code}: ${message}` : message,
+    status: effectiveStatus,
+    retryable,
+    rawPayload: payload
+  };
+}
+
+function describeHttpFailure(
+  status: number,
+  statusText: string,
+  retryAfterMs: number | undefined,
+  bodyDetails: { code?: string; message?: string } | undefined
+): string {
+  const parts = [`FoodData Central request failed: ${status} ${statusText}`];
+  if (bodyDetails?.code || bodyDetails?.message) {
+    parts.push(
+      ['USDA', bodyDetails.code].filter(Boolean).join(' '),
+      bodyDetails.message ?? ''
+    );
+  }
+  if (retryAfterMs !== undefined) {
+    parts.push(`Retry after ${formatDurationMs(retryAfterMs)}.`);
+  }
+  return parts.filter(Boolean).join(' — ');
+}
+
+function formatDurationMs(value: number): string {
+  const seconds = Math.ceil(Math.max(0, value) / 1000);
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (minutes < 60) {
+    return remainingSeconds ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }

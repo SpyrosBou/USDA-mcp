@@ -2,7 +2,7 @@
 
 Model Context Protocol (MCP) server that exposes USDA FoodData Central search and lookup tools. Plug it into Codex CLI, Claude Desktop, or any MCP-aware client to explore nutrition data without writing HTTP calls by hand.
 
-_Last README sync: base commit `4f63762` (update after next commit)._
+_Last README sync: base commit `661dc1e` (update after next commit)._ 
 
 ---
 
@@ -182,10 +182,10 @@ Gemini CLI merges MCP servers from system, user, and workspace settings ([Gemini
 All tools return a plain-text summary plus a `structuredContent` payload with a `summary` object, compact `previews`, and (when requested) the raw USDA response. Use the preview and dry-run switches to conserve context until you know you need the full payload.
 
 - `search-foods` – Full-text search that only surfaces the food description, optional brand/data type, and `fdcId` so agents can pick an entry without excessive detail. Filters, cursor pagination, sort controls, and dry-run previews help shrink context impact.
-- `get-food` – Fetch a single FoodData Central (FDC) record by ID with optional `format` and `nutrients` filters. The summary highlights macros (when present) and any notable gaps in the response.
+- `get-food` – Fetch a single FoodData Central (FDC) record by ID with optional `format` and `nutrients` filters. Requests default to the faster USDA “abridged” view; the summary highlights macros (when present) and any notable gaps in the response. When the USDA API no longer serves an identifier (common for older SR Legacy entries), the tool returns an explicit “FDC ID … not found” note instead of timing out.
 - `get_macros` – Return per-100 g calories, protein, fat, and carbohydrates for a single FDC entry with structured nutrient metadata.
 - `get_fats`, `get_protein`, `get_carbs`, `get_kcal`, `get_satfats`, `get_fiber` – Single-nutrient lookups that emit just the requested per-100 g value (or note that it is unavailable) to keep tool output distinct.
-- `get-foods` – Bulk lookup for up to 50 FDC IDs in one call. Supports `previewOnly`, `includeRaw`, `sampleSize`, and `estimateOnly` so you can review lightweight previews before retrieving the full objects, and now flags any requested IDs the USDA API omits.
+- `get-foods` – Bulk lookup for up to 50 FDC IDs in one call. Supports `previewOnly`, `includeRaw`, `sampleSize`, and `estimateOnly` so you can review lightweight previews before retrieving the full objects, defaults to the faster USDA “abridged” format, and flags any requested IDs the USDA API omits so you know which lookups need follow-up.
 - `list-foods` – Deterministic paginated listing that accepts optional `filters` (data types, brand owner), cursor-based `pagination`, `sort`, and the same preview/dry-run switches as `search-foods`. The summary returns the next cursor only when another page is likely available.
 
 ---
@@ -198,7 +198,7 @@ All tools return a plain-text summary plus a `structuredContent` payload with a 
 
 ## Operational Notes
 
-- Requests time out after 30 seconds, use up to two retries with jittered exponential backoff on HTTP 429 or 5xx, and throttle to two concurrent calls with ≥250 ms spacing.
+- Requests time out after 30 seconds, use up to two retries with jittered exponential backoff on HTTP 429 or 5xx, and throttle to one concurrent call with ≥400 ms spacing so we stay under the 3 requests/second USDA ceiling. When USDA asks for a longer pause (via `Retry-After`), that guidance is surfaced in the error text.
 - Handle USDA rate limits responsibly: use narrow filters, reuse previous results, and avoid large bulk queries unless necessary.
 - Missing or invalid API keys cause the server to log the issue and exit immediately so MCP clients can surface the error.
 
@@ -218,6 +218,8 @@ Run `npm run build` whenever you change server code and want Codex or other clie
 
 - **Startup fails: missing API key** – Ensure `USDA_API_KEY` is exported in your shell or supplied through the MCP client config.
 - **Client connects but requests fail with 401/403** – Verify the key is active and not rate-limited on the USDA side.
+- **Repeated 429 Too Many Requests** – Each tool already slows calls to one at a time; if you still get 429 responses, wait for the `Retry-After` duration shown in the error text or batch IDs into fewer round-trips.
+- **Legacy FDC ID returns “not found”** – USDA periodically retires SR Legacy entries (e.g. 1123 for olive oil). Use `search-foods` to locate the replacement FDC ID or cross-check the public API documentation for current identifiers.
 - **CLI warns about missing `dist/server.js`** – Run `npm run build` before invoking `npx usda-mcp`.
 
 For API reference, see the official FoodData Central guide: https://fdc.nal.usda.gov/api-guide.html
