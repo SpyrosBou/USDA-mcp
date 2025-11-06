@@ -5,6 +5,7 @@ import { z, type ZodRawShape } from 'zod';
 
 import {
   FoodDataCentralClient,
+  FoodDataCentralError,
   FoodItem,
   FoodQueryOptions,
   ListFoodsRequest,
@@ -111,6 +112,7 @@ const foodSummaryShape = {
   dataType: z.string().optional(),
   brandOwner: z.string().optional(),
   publishedDate: z.string().optional(),
+  requestedFdcIds: z.array(z.number().int().positive()).min(1).optional(),
   macros: macroSummarySchema.optional()
 } satisfies ZodRawShape;
 
@@ -257,6 +259,28 @@ const listFoodsOutputShape = {
   foods: z.array(foodItemSchema).optional()
 } satisfies ZodRawShape;
 
+type FdcIdAlias = {
+  replacementId: number;
+  dataset?: string;
+  rationale?: string;
+};
+
+type AliasResolution = {
+  requestedId: number;
+  alias: FdcIdAlias;
+};
+
+const FDC_ID_ALIASES: ReadonlyMap<number, FdcIdAlias> = new Map([
+  [
+    4053,
+    {
+      replacementId: 748608,
+      dataset: 'Foundation',
+      rationale: 'USDA retired the SR Legacy olive oil record; the Foundation entry retains the same nutrient profile.'
+    }
+  ]
+]);
+
 const NUTRIENT_KEYS = ['calories', 'protein', 'fat', 'carbs', 'saturatedFat', 'fiber'] as const;
 
 type NutrientKey = (typeof NUTRIENT_KEYS)[number];
@@ -275,7 +299,11 @@ const NUTRIENT_DEFINITIONS: Record<NutrientKey, NutrientDefinition> = {
     label: 'Calories',
     unit: 'kcal',
     ids: new Set([1008, 208]),
-    names: new Set(['energy', 'energy (atwater general factors)'].map((value) => value.toLowerCase()))
+    names: new Set(
+      ['energy', 'energy (atwater general factors)', 'energy (kcal)', 'calories'].map((value) =>
+        value.toLowerCase()
+      )
+    )
   },
   protein: {
     key: 'protein',
@@ -288,15 +316,23 @@ const NUTRIENT_DEFINITIONS: Record<NutrientKey, NutrientDefinition> = {
     key: 'fat',
     label: 'Total fat',
     unit: 'g',
-    ids: new Set([1004, 204]),
-    names: new Set(['total lipid (fat)', 'total fat'].map((value) => value.toLowerCase()))
+    ids: new Set([1004, 204, 1085]),
+    names: new Set(
+      ['total lipid (fat)', 'total fat', 'total fat (nlea)', 'total lipid (nlea)'].map((value) =>
+        value.toLowerCase()
+      )
+    )
   },
   carbs: {
     key: 'carbs',
     label: 'Carbohydrates',
     unit: 'g',
-    ids: new Set([1005, 205]),
-    names: new Set(['carbohydrate, by difference', 'carbohydrates'].map((value) => value.toLowerCase()))
+    ids: new Set([1005, 205, 2039]),
+    names: new Set(
+      ['carbohydrate, by difference', 'carbohydrates', 'total carbohydrate (nlea)'].map((value) =>
+        value.toLowerCase()
+      )
+    )
   },
   saturatedFat: {
     key: 'saturatedFat',
@@ -312,6 +348,15 @@ const NUTRIENT_DEFINITIONS: Record<NutrientKey, NutrientDefinition> = {
     ids: new Set([1079, 291]),
     names: new Set(['fiber, total dietary', 'dietary fiber'].map((value) => value.toLowerCase()))
   }
+};
+
+const LABEL_NUTRIENT_CANDIDATES: Record<NutrientKey, ReadonlyArray<string>> = {
+  calories: ['calories', 'energy'],
+  protein: ['protein'],
+  fat: ['fat', 'totalFat', 'total fat'],
+  carbs: ['carbohydrates', 'carbs', 'totalCarbohydrate', 'total carbohydrate'],
+  saturatedFat: ['saturatedFat', 'saturated fat'],
+  fiber: ['fiber', 'dietaryFiber', 'dietary fiber']
 };
 
 const nutrientValueSchema = z
@@ -533,11 +578,14 @@ server.registerTool(
       nutrients: input.nutrients
     };
 
-    const food = await client.getFood(input.fdcId, options);
+    const { food, aliasInfo } = await fetchFoodWithAlias(input.fdcId, options);
     const macros = extractMacroSummary(food);
     const macroHeadline = describeMacroSummary(macros);
 
     const summaryNotes: string[] = [];
+    if (aliasInfo) {
+      summaryNotes.push(formatAliasNote(aliasInfo, food));
+    }
     if (!macros) {
       summaryNotes.push('Macro summary not provided in USDA response.');
     }
@@ -593,18 +641,33 @@ server.registerTool(
     }
   },
   async (input) => {
-    const { food, matches } = await fetchFoodForNutrients(input.fdcId, macroNutrientKeys);
+    const { food, matches, aliasInfo } = await fetchFoodForNutrients(input.fdcId, macroNutrientKeys);
+    const recordMeta = getRecord(food);
+    const dataType =
+      typeof recordMeta?.dataType === 'string' ? recordMeta.dataType.trim().toLowerCase() : undefined;
+    const description = describeFood(food);
     const nutrientValues = macroNutrientKeys.map((key) => buildNutrientValue(key, matches[key]));
     const missingLabels = nutrientValues
       .filter((nutrient) => nutrient.valuePer100g === undefined)
       .map((nutrient) => nutrient.label);
-    const notes = missingLabels.length
-      ? [`Missing values for: ${missingLabels.join(', ')}.`]
-      : [];
+    if (dataType === 'foundation' && missingLabels.length) {
+      const aliasSuffix = aliasInfo ? ` ${formatAliasNote(aliasInfo, food)}` : '';
+      const missingText = missingLabels.join(', ');
+      throw new Error(
+        `Foundation entry ${description} omits ${missingText}. Choose an FDC record that lists macros or derive the values manually.${aliasSuffix}`
+      );
+    }
+    const notes: string[] = [];
+    if (aliasInfo) {
+      notes.push(formatAliasNote(aliasInfo, food));
+    }
+    if (missingLabels.length) {
+      notes.push(`Missing values for: ${missingLabels.join(', ')}.`);
+    }
 
     const summary = {
       fdcId: input.fdcId,
-      description: describeFood(food),
+      description,
       ...(notes.length ? { notes } : {})
     };
 
@@ -735,27 +798,66 @@ server.registerTool(
       };
     }
 
-    const foods = await client.getFoods({
+    const initialFoods = await client.getFoods({
       fdcIds: input.fdcIds,
       format: input.format,
       nutrients: input.nutrients
     });
 
-    const summaries = foods.map((food) => toFoodSummary(food));
-    const previewSummaries = summaries.slice(0, sampleSize);
-    const returnedIds = new Set<number>(
-      summaries
-        .map((summary) => summary.fdcId)
-        .filter((fdcId): fdcId is number => typeof fdcId === 'number')
+    let combinedFoods = dedupeFoodsByFdcId(initialFoods);
+
+    const returnedIds = new Set<number>();
+    for (const food of combinedFoods) {
+      const fdcId = extractFdcId(food);
+      if (typeof fdcId === 'number') {
+        returnedIds.add(fdcId);
+      }
+    }
+
+    const fulfilledIds = new Set<number>(
+      input.fdcIds.filter((id) => returnedIds.has(id))
     );
+
     const missingFdcIds = input.fdcIds.filter((id) => !returnedIds.has(id));
+    const aliasOptions: FoodQueryOptions = {
+      format: input.format,
+      nutrients: input.nutrients
+    };
+    let aliasNotes: string[] = [];
+    const aliasFulfillmentByFdcId = new Map<number, number[]>();
+
+    if (missingFdcIds.length) {
+      const aliasResult = await hydrateAliasesForBulk(missingFdcIds, aliasOptions);
+      if (aliasResult.foods.length) {
+        combinedFoods = dedupeFoodsByFdcId([...combinedFoods, ...aliasResult.foods]);
+      }
+      if (aliasResult.resolved.length) {
+        aliasNotes = aliasResult.resolved.map((entry) => formatAliasNote(entry.info, entry.food));
+        for (const entry of aliasResult.resolved) {
+          fulfilledIds.add(entry.info.requestedId);
+          const aliasId = extractFdcId(entry.food);
+          if (aliasId !== undefined) {
+            const pending = aliasFulfillmentByFdcId.get(aliasId) ?? [];
+            pending.push(entry.info.requestedId);
+            aliasFulfillmentByFdcId.set(aliasId, pending);
+          }
+        }
+      }
+    }
+
+    const summaries = combinedFoods.map((food) => toFoodSummary(food, aliasFulfillmentByFdcId));
+    const previewSummaries = summaries.slice(0, sampleSize);
+    const unresolvedIds = input.fdcIds.filter((id) => !fulfilledIds.has(id));
 
     const notes: string[] = [];
-    if (missingFdcIds.length) {
-      const preview = missingFdcIds.slice(0, 5).join(', ');
+    if (aliasNotes.length) {
+      notes.push(...aliasNotes);
+    }
+    if (unresolvedIds.length) {
+      const preview = unresolvedIds.slice(0, 5).join(', ');
       notes.push(
-        missingFdcIds.length > 5
-          ? `USDA did not return ${missingFdcIds.length} requested IDs (${preview}…).`
+        unresolvedIds.length > 5
+          ? `USDA did not return ${unresolvedIds.length} requested IDs (${preview}…).`
           : `USDA did not return: ${preview}.`
       );
     }
@@ -768,14 +870,14 @@ server.registerTool(
 
     const summary = {
       requested: input.fdcIds.length,
-      returned: previewOnly ? previewSummaries.length : foods.length,
+      returned: previewOnly ? previewSummaries.length : combinedFoods.length,
       ...(previewOnly ? { previewOnly: true } : {}),
       ...(notes.length ? { notes } : {})
     };
 
     const examples = previewSummaries.slice(0, 3).map((food) => food.description).join('; ');
     const lines = [
-      `Retrieved ${previewOnly ? previewSummaries.length : foods.length} of ${input.fdcIds.length} requested foods.`,
+      `Retrieved ${previewOnly ? previewSummaries.length : combinedFoods.length} of ${input.fdcIds.length} requested foods.`,
       examples ? `Examples: ${examples}.` : undefined,
       previewOnly ? 'Preview mode active; set previewOnly=false for full payload.' : undefined
     ].filter((line): line is string => Boolean(line));
@@ -790,7 +892,7 @@ server.registerTool(
       structuredContent: {
         summary,
         previews: previewSummaries,
-        ...(includeRaw ? { foods } : {})
+        ...(includeRaw ? { foods: combinedFoods } : {})
       }
     };
   }
@@ -1142,13 +1244,14 @@ function collectNutrients(
   food: FoodItem,
   keys: NutrientKey[]
 ): Partial<Record<NutrientKey, NutrientMatch>> {
-  const nutrients = (food as Record<string, unknown>)?.foodNutrients;
-  if (!Array.isArray(nutrients) || keys.length === 0) {
+  if (keys.length === 0) {
     return {};
   }
 
   const pending = new Set<NutrientKey>(keys);
   const results: Partial<Record<NutrientKey, NutrientMatch>> = {};
+  const record = getRecord(food);
+  const nutrients = Array.isArray(record?.foodNutrients) ? record?.foodNutrients : [];
 
   for (const entry of nutrients) {
     if (pending.size === 0) {
@@ -1179,7 +1282,58 @@ function collectNutrients(
     }
   }
 
+  if (pending.size > 0 && record) {
+    const labelNutrients = getRecord(record.labelNutrients);
+    if (labelNutrients) {
+      const lookup = buildLabelNutrientLookup(labelNutrients);
+      for (const key of Array.from(pending)) {
+        const candidates = LABEL_NUTRIENT_CANDIDATES[key];
+        for (const candidate of candidates) {
+          const labelEntry = lookup(candidate);
+          const amount = resolveLabelNutrientAmount(labelEntry);
+          if (amount === undefined) {
+            continue;
+          }
+          results[key] = {
+            value: amount
+          };
+          pending.delete(key);
+          break;
+        }
+      }
+    }
+  }
+
   return results;
+}
+
+function buildLabelNutrientLookup(labelNutrients: Record<string, unknown>): (candidate: string) => unknown {
+  const entries = new Map<string, unknown>();
+  for (const [rawKey, value] of Object.entries(labelNutrients)) {
+    if (typeof rawKey !== 'string') {
+      continue;
+    }
+    const lower = rawKey.toLowerCase();
+    const normalized = normalizeLabelKey(rawKey);
+    if (!entries.has(rawKey)) {
+      entries.set(rawKey, value);
+    }
+    if (!entries.has(lower)) {
+      entries.set(lower, value);
+    }
+    if (!entries.has(normalized)) {
+      entries.set(normalized, value);
+    }
+  }
+
+  return (candidate: string) => {
+    if (typeof candidate !== 'string' || candidate.trim() === '') {
+      return undefined;
+    }
+    const lower = candidate.toLowerCase();
+    const normalized = normalizeLabelKey(candidate);
+    return entries.get(candidate) ?? entries.get(lower) ?? entries.get(normalized);
+  };
 }
 
 function buildNutrientValue(key: NutrientKey, match?: NutrientMatch): NutrientValue {
@@ -1196,7 +1350,7 @@ function buildNutrientValue(key: NutrientKey, match?: NutrientMatch): NutrientVa
 async function fetchFoodForNutrients(
   fdcId: number,
   keys: NutrientKey[]
-): Promise<{ food: FoodItem; matches: Partial<Record<NutrientKey, NutrientMatch>> }> {
+): Promise<{ food: FoodItem; matches: Partial<Record<NutrientKey, NutrientMatch>>; aliasInfo?: AliasResolution }> {
   const nutrientIds = new Set<number>();
   for (const key of keys) {
     for (const id of NUTRIENT_DEFINITIONS[key].ids) {
@@ -1204,14 +1358,86 @@ async function fetchFoodForNutrients(
     }
   }
 
-  const options: FoodQueryOptions = {
-    format: 'abridged',
-    ...(nutrientIds.size ? { nutrients: Array.from(nutrientIds) } : {})
+  const attempts: FoodQueryOptions[] = [];
+  const attemptSignatures = new Set<string>();
+  const addAttempt = (options: FoodQueryOptions): void => {
+    const normalized: FoodQueryOptions = {
+      ...(options.format ? { format: options.format } : {})
+    };
+    if (options.nutrients && options.nutrients.length) {
+      normalized.nutrients = [...options.nutrients];
+    }
+    const signature = buildNutrientRequestSignature(normalized);
+    if (attemptSignatures.has(signature)) {
+      return;
+    }
+    attemptSignatures.add(signature);
+    attempts.push(normalized);
   };
 
-  const food = await client.getFood(fdcId, options);
-  const matches = collectNutrients(food, keys);
-  return { food, matches };
+  if (nutrientIds.size) {
+    const sortedNutrients = Array.from(nutrientIds).sort((a, b) => a - b);
+    addAttempt({
+      format: 'abridged',
+      nutrients: sortedNutrients
+    });
+  }
+
+  addAttempt({ format: 'full' });
+  addAttempt({ format: 'abridged' });
+
+  if (!attempts.length) {
+    addAttempt({ format: 'abridged' });
+  }
+
+  let aliasInfo: AliasResolution | undefined;
+  let lastResult: { food: FoodItem; matches: Partial<Record<NutrientKey, NutrientMatch>> } | undefined;
+
+  for (let index = 0; index < attempts.length; index += 1) {
+    const attempt = attempts[index];
+    const fetched = await fetchFoodWithAlias(fdcId, attempt);
+    if (!aliasInfo && fetched.aliasInfo) {
+      aliasInfo = fetched.aliasInfo;
+    }
+
+    const matches = collectNutrients(fetched.food, keys);
+    lastResult = { food: fetched.food, matches };
+    const hasAllMatches = hasAllNutrientMatches(matches, keys);
+    const isLastAttempt = index === attempts.length - 1;
+
+    if (hasAllMatches || isLastAttempt) {
+      return {
+        food: fetched.food,
+        matches,
+        aliasInfo
+      };
+    }
+  }
+
+  if (lastResult) {
+    return {
+      food: lastResult.food,
+      matches: lastResult.matches,
+      aliasInfo
+    };
+  }
+
+  throw new Error(`Unable to fetch nutrient data for FDC ${fdcId}.`);
+}
+
+function buildNutrientRequestSignature(options: FoodQueryOptions): string {
+  const format = options.format ?? 'default';
+  const nutrientIds = Array.isArray(options.nutrients)
+    ? [...options.nutrients].sort((a, b) => a - b)
+    : [];
+  return `${format}:${nutrientIds.join(',')}`;
+}
+
+function hasAllNutrientMatches(
+  matches: Partial<Record<NutrientKey, NutrientMatch>>,
+  keys: NutrientKey[]
+): boolean {
+  return keys.every((key) => matches[key] !== undefined);
 }
 
 function describeNutrientSeries(values: NutrientValue[]): string {
@@ -1270,13 +1496,16 @@ function registerSingleNutrientTool(config: {
       }
     },
     async (input) => {
-      const { food, matches } = await fetchFoodForNutrients(input.fdcId, [config.key]);
+      const { food, matches, aliasInfo } = await fetchFoodForNutrients(input.fdcId, [config.key]);
       const nutrientMatch = matches[config.key];
       const nutrientValue = buildNutrientValue(config.key, nutrientMatch);
-      const notes =
-        nutrientValue.valuePer100g === undefined
-          ? [`${definition.label} not available for this entry.`]
-          : [];
+      const notes: string[] = [];
+      if (aliasInfo) {
+        notes.push(formatAliasNote(aliasInfo, food));
+      }
+      if (nutrientValue.valuePer100g === undefined) {
+        notes.push(`${definition.label} not available for this entry.`);
+      }
       const summary = {
         fdcId: input.fdcId,
         description: describeFood(food),
@@ -1357,6 +1586,123 @@ function resolveNutrientAmount(entry: unknown): number | undefined {
   );
 }
 
+function resolveLabelNutrientAmount(entry: unknown): number | undefined {
+  if (entry === undefined || entry === null) {
+    return undefined;
+  }
+
+  if (typeof entry === 'number' || typeof entry === 'string') {
+    return toFiniteNumber(entry);
+  }
+
+  if (typeof entry === 'object') {
+    const base = entry as Record<string, unknown>;
+    return toFiniteNumber(base.value ?? base.amount ?? base.perServing ?? base.per100g);
+  }
+
+  return undefined;
+}
+
+function normalizeLabelKey(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+async function fetchFoodWithAlias(
+  fdcId: number,
+  options?: FoodQueryOptions
+): Promise<{ food: FoodItem; resolvedFdcId: number; aliasInfo?: AliasResolution }> {
+  try {
+    const food = await client.getFood(fdcId, options);
+    return { food, resolvedFdcId: fdcId };
+  } catch (error) {
+    if (error instanceof FoodDataCentralError && error.status === 404) {
+      const alias = resolveFdcAlias(fdcId);
+      if (alias) {
+        const food = await client.getFood(alias.replacementId, options);
+        return {
+          food,
+          resolvedFdcId: alias.replacementId,
+          aliasInfo: {
+            requestedId: fdcId,
+            alias
+          }
+        };
+      }
+    }
+    throw error;
+  }
+}
+
+function resolveFdcAlias(fdcId: number): FdcIdAlias | undefined {
+  return FDC_ID_ALIASES.get(fdcId);
+}
+
+function formatAliasNote(info: AliasResolution, aliasFood: FoodItem): string {
+  const aliasDescription = describeFood(aliasFood);
+  const datasetSuffix = info.alias.dataset ? ` (${info.alias.dataset})` : '';
+  const rationale = info.alias.rationale ? ` ${info.alias.rationale}` : '';
+  return `FDC ${info.requestedId} not returned by USDA; substituted ${aliasDescription}${datasetSuffix}.${rationale}`.trim();
+}
+
+type ResolvedAliasFood = {
+  info: AliasResolution;
+  food: FoodItem;
+};
+
+async function hydrateAliasesForBulk(
+  missingIds: number[],
+  options?: FoodQueryOptions
+): Promise<{ foods: FoodItem[]; resolved: ResolvedAliasFood[] }> {
+  if (!missingIds.length) {
+    return { foods: [], resolved: [] };
+  }
+
+  const aliasRequests = missingIds
+    .map((requestedId) => {
+      const alias = resolveFdcAlias(requestedId);
+      return alias ? { requestedId, alias } : undefined;
+    })
+    .filter((value): value is { requestedId: number; alias: FdcIdAlias } => Boolean(value));
+
+  if (!aliasRequests.length) {
+    return { foods: [], resolved: [] };
+  }
+
+  const aliasIds = Array.from(
+    new Set(aliasRequests.map((entry) => entry.alias.replacementId))
+  );
+
+  const aliasFoods = await client.getFoods({
+    fdcIds: aliasIds,
+    format: options?.format,
+    nutrients: options?.nutrients
+  });
+
+  const aliasFoodById = new Map<number, FoodItem>();
+  for (const aliasFood of aliasFoods) {
+    const aliasId = extractFdcId(aliasFood);
+    if (aliasId !== undefined && !aliasFoodById.has(aliasId)) {
+      aliasFoodById.set(aliasId, aliasFood);
+    }
+  }
+
+  const resolved: ResolvedAliasFood[] = [];
+  for (const request of aliasRequests) {
+    const aliasFood = aliasFoodById.get(request.alias.replacementId);
+    if (aliasFood) {
+      resolved.push({
+        info: {
+          requestedId: request.requestedId,
+          alias: request.alias
+        },
+        food: aliasFood
+      });
+    }
+  }
+
+  return { foods: aliasFoods, resolved };
+}
+
 function toFiniteNumber(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value;
@@ -1413,6 +1759,7 @@ type FoodSummary = {
   dataType?: string;
   brandOwner?: string;
   publishedDate?: string;
+  requestedFdcIds?: number[];
   macros?: MacroSummary;
 };
 
@@ -1423,7 +1770,7 @@ type SearchPreview = {
   brandOwner?: string;
 };
 
-function toFoodSummary(food: FoodItem): FoodSummary {
+function toFoodSummary(food: FoodItem, aliasFulfillment?: Map<number, number[]>): FoodSummary {
   const macros = extractMacroSummary(food);
   const fdcId = extractFdcId(food);
   const record = getRecord(food);
@@ -1431,6 +1778,12 @@ function toFoodSummary(food: FoodItem): FoodSummary {
   const brandOwner = typeof record?.brandOwner === 'string' ? record.brandOwner : undefined;
   const publishedDate =
     typeof record?.publishedDate === 'string' ? record.publishedDate : undefined;
+  const requestedIds =
+    typeof fdcId === 'number' ? aliasFulfillment?.get(fdcId) : undefined;
+  const normalizedRequestedIds =
+    requestedIds && requestedIds.length
+      ? Array.from(new Set(requestedIds)).sort((a, b) => a - b)
+      : undefined;
 
   return {
     description: describeFood(food),
@@ -1438,6 +1791,7 @@ function toFoodSummary(food: FoodItem): FoodSummary {
     ...(dataType ? { dataType } : {}),
     ...(brandOwner ? { brandOwner } : {}),
     ...(publishedDate ? { publishedDate } : {}),
+    ...(normalizedRequestedIds ? { requestedFdcIds: normalizedRequestedIds } : {}),
     ...(macros ? { macros } : {})
   };
 }
@@ -1475,6 +1829,22 @@ function extractFdcId(food: FoodItem): number | undefined {
   }
 
   return toFiniteNumber(record.fdcId ?? record.fdc_id);
+}
+
+function dedupeFoodsByFdcId(foods: FoodItem[]): FoodItem[] {
+  const seen = new Set<number>();
+  const deduped: FoodItem[] = [];
+  for (const food of foods) {
+    const fdcId = extractFdcId(food);
+    if (fdcId !== undefined && seen.has(fdcId)) {
+      continue;
+    }
+    deduped.push(food);
+    if (fdcId !== undefined) {
+      seen.add(fdcId);
+    }
+  }
+  return deduped;
 }
 
 function buildEnvironmentOverview(): string {
