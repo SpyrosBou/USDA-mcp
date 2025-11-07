@@ -350,14 +350,31 @@ const NUTRIENT_DEFINITIONS: Record<NutrientKey, NutrientDefinition> = {
   }
 };
 
-const LABEL_NUTRIENT_CANDIDATES: Record<NutrientKey, ReadonlyArray<string>> = {
-  calories: ['calories', 'energy'],
-  protein: ['protein'],
-  fat: ['fat', 'totalFat', 'total fat'],
-  carbs: ['carbohydrates', 'carbs', 'totalCarbohydrate', 'total carbohydrate'],
+const LABEL_CANDIDATE_OVERRIDES: Partial<Record<NutrientKey, ReadonlyArray<string>>> = {
+  calories: ['calories', 'energy', 'energy (kcal)'],
+  protein: ['protein', 'protein (nlea)'],
+  fat: ['fat', 'totalFat', 'total fat', 'total fat (nlea)', 'total lipid (fat)', 'total lipid (nlea)'],
+  carbs: [
+    'carbohydrates',
+    'carbs',
+    'totalCarbohydrate',
+    'total carbohydrate',
+    'total carbohydrate (nlea)'
+  ],
   saturatedFat: ['saturatedFat', 'saturated fat'],
   fiber: ['fiber', 'dietaryFiber', 'dietary fiber']
 };
+
+const LABEL_NUTRIENT_CANDIDATES: Record<NutrientKey, ReadonlyArray<string>> = NUTRIENT_KEYS.reduce(
+  (acc, key) => {
+    const definitionNames = Array.from(NUTRIENT_DEFINITIONS[key].names);
+    const overrides = LABEL_CANDIDATE_OVERRIDES[key] ?? [];
+    const merged = new Set<string>([...overrides, ...definitionNames]);
+    acc[key] = Array.from(merged);
+    return acc;
+  },
+  {} as Record<NutrientKey, ReadonlyArray<string>>
+);
 
 const nutrientValueSchema = z
   .object({
