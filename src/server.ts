@@ -281,14 +281,37 @@ const FDC_ID_ALIASES: ReadonlyMap<number, FdcIdAlias> = new Map([
   ]
 ]);
 
-const NUTRIENT_KEYS = ['calories', 'protein', 'fat', 'carbs', 'saturatedFat', 'fiber'] as const;
+const NUTRIENT_KEYS = [
+  'calories',
+  'protein',
+  'fat',
+  'carbs',
+  'saturatedFat',
+  'fiber',
+  'calcium',
+  'iron',
+  'potassium',
+  'sodium',
+  'magnesium',
+  'zinc',
+  'vitaminA',
+  'vitaminC',
+  'vitaminD',
+  'vitaminE',
+  'vitaminK',
+  'folate',
+  'vitaminB6',
+  'vitaminB12'
+] as const;
 
 type NutrientKey = (typeof NUTRIENT_KEYS)[number];
+
+type NutrientUnit = 'g' | 'kcal' | 'mg' | 'mcg';
 
 type NutrientDefinition = {
   key: NutrientKey;
   label: string;
-  unit: 'g' | 'kcal';
+  unit: NutrientUnit;
   ids: ReadonlySet<number>;
   names: ReadonlySet<string>;
 };
@@ -347,6 +370,104 @@ const NUTRIENT_DEFINITIONS: Record<NutrientKey, NutrientDefinition> = {
     unit: 'g',
     ids: new Set([1079, 291]),
     names: new Set(['fiber, total dietary', 'dietary fiber'].map((value) => value.toLowerCase()))
+  },
+  calcium: {
+    key: 'calcium',
+    label: 'Calcium',
+    unit: 'mg',
+    ids: new Set([1087, 301]),
+    names: new Set(['calcium', 'calcium, ca'].map((value) => value.toLowerCase()))
+  },
+  iron: {
+    key: 'iron',
+    label: 'Iron',
+    unit: 'mg',
+    ids: new Set([1089, 303]),
+    names: new Set(['iron', 'iron, fe'].map((value) => value.toLowerCase()))
+  },
+  potassium: {
+    key: 'potassium',
+    label: 'Potassium',
+    unit: 'mg',
+    ids: new Set([1092, 306]),
+    names: new Set(['potassium', 'potassium, k'].map((value) => value.toLowerCase()))
+  },
+  sodium: {
+    key: 'sodium',
+    label: 'Sodium',
+    unit: 'mg',
+    ids: new Set([1093, 307]),
+    names: new Set(['sodium', 'sodium, na'].map((value) => value.toLowerCase()))
+  },
+  magnesium: {
+    key: 'magnesium',
+    label: 'Magnesium',
+    unit: 'mg',
+    ids: new Set([1090, 304]),
+    names: new Set(['magnesium', 'magnesium, mg'].map((value) => value.toLowerCase()))
+  },
+  zinc: {
+    key: 'zinc',
+    label: 'Zinc',
+    unit: 'mg',
+    ids: new Set([1095, 309]),
+    names: new Set(['zinc', 'zinc, zn'].map((value) => value.toLowerCase()))
+  },
+  vitaminA: {
+    key: 'vitaminA',
+    label: 'Vitamin A (RAE)',
+    unit: 'mcg',
+    ids: new Set([1104, 318]),
+    names: new Set(['vitamin a', 'vitamin a, rae', 'vitamin a, iu'].map((value) => value.toLowerCase()))
+  },
+  vitaminC: {
+    key: 'vitaminC',
+    label: 'Vitamin C',
+    unit: 'mg',
+    ids: new Set([1162, 401]),
+    names: new Set(['vitamin c', 'vitamin c, total ascorbic acid'].map((value) => value.toLowerCase()))
+  },
+  vitaminD: {
+    key: 'vitaminD',
+    label: 'Vitamin D',
+    unit: 'mcg',
+    ids: new Set([1114, 324, 328]),
+    names: new Set(['vitamin d', 'vitamin d (d2 + d3)'].map((value) => value.toLowerCase()))
+  },
+  vitaminE: {
+    key: 'vitaminE',
+    label: 'Vitamin E',
+    unit: 'mg',
+    ids: new Set([1109, 323]),
+    names: new Set(['vitamin e', 'vitamin e (alpha-tocopherol)'].map((value) => value.toLowerCase()))
+  },
+  vitaminK: {
+    key: 'vitaminK',
+    label: 'Vitamin K',
+    unit: 'mcg',
+    ids: new Set([1185, 430]),
+    names: new Set(['vitamin k', 'vitamin k (phylloquinone)'].map((value) => value.toLowerCase()))
+  },
+  folate: {
+    key: 'folate',
+    label: 'Folate',
+    unit: 'mcg',
+    ids: new Set([1186, 417]),
+    names: new Set(['folate', 'folate, total'].map((value) => value.toLowerCase()))
+  },
+  vitaminB6: {
+    key: 'vitaminB6',
+    label: 'Vitamin B6',
+    unit: 'mg',
+    ids: new Set([1175, 415]),
+    names: new Set(['vitamin b6', 'vitamin b-6'].map((value) => value.toLowerCase()))
+  },
+  vitaminB12: {
+    key: 'vitaminB12',
+    label: 'Vitamin B12',
+    unit: 'mcg',
+    ids: new Set([1178, 418]),
+    names: new Set(['vitamin b12', 'vitamin b-12'].map((value) => value.toLowerCase()))
   }
 };
 
@@ -362,7 +483,21 @@ const LABEL_CANDIDATE_OVERRIDES: Partial<Record<NutrientKey, ReadonlyArray<strin
     'total carbohydrate (nlea)'
   ],
   saturatedFat: ['saturatedFat', 'saturated fat'],
-  fiber: ['fiber', 'dietaryFiber', 'dietary fiber']
+  fiber: ['fiber', 'dietaryFiber', 'dietary fiber'],
+  calcium: ['calcium'],
+  iron: ['iron'],
+  potassium: ['potassium'],
+  sodium: ['sodium'],
+  magnesium: ['magnesium'],
+  zinc: ['zinc'],
+  vitaminA: ['vitaminA', 'vitamin a', 'vitaminA (mcg)'],
+  vitaminC: ['vitaminC', 'vitamin c'],
+  vitaminD: ['vitaminD', 'vitamin d'],
+  vitaminE: ['vitaminE', 'vitamin e'],
+  vitaminK: ['vitaminK', 'vitamin k'],
+  folate: ['folate'],
+  vitaminB6: ['vitaminB6', 'vitamin b6', 'vitamin b-6'],
+  vitaminB12: ['vitaminB12', 'vitamin b12', 'vitamin b-12']
 };
 
 const LABEL_NUTRIENT_CANDIDATES: Record<NutrientKey, ReadonlyArray<string>> = NUTRIENT_KEYS.reduce(
@@ -380,7 +515,7 @@ const nutrientValueSchema = z
   .object({
     key: z.enum(NUTRIENT_KEYS),
     label: z.string(),
-    unit: z.enum(['g', 'kcal']),
+    unit: z.enum(['g', 'kcal', 'mg', 'mcg']),
     valuePer100g: z.number().nonnegative().optional(),
     sourceNutrientId: z.number().optional()
   })
@@ -397,7 +532,7 @@ const singleNutrientOutputShape = {
   nutrient: nutrientValueSchema
 } satisfies ZodRawShape;
 
-const macroOnlyOutputShape = {
+const nutrientListOutputShape = {
   summary: z
     .object({
       fdcId: z.number(),
@@ -631,6 +766,22 @@ server.registerTool(
 );
 
 const macroNutrientKeys: NutrientKey[] = ['calories', 'protein', 'fat', 'carbs'];
+const microNutrientKeys: NutrientKey[] = [
+  'calcium',
+  'iron',
+  'potassium',
+  'sodium',
+  'magnesium',
+  'zinc',
+  'vitaminA',
+  'vitaminC',
+  'vitaminD',
+  'vitaminE',
+  'vitaminK',
+  'folate',
+  'vitaminB6',
+  'vitaminB12'
+];
 
 server.registerTool(
   'get_macros',
@@ -646,7 +797,7 @@ server.registerTool(
     inputSchema: {
       fdcId: z.number().int().positive()
     },
-    outputSchema: macroOnlyOutputShape,
+    outputSchema: nutrientListOutputShape,
     _meta: {
       version: '2025-07-01',
       nutrientKeys: macroNutrientKeys,
@@ -695,6 +846,70 @@ server.registerTool(
         {
           type: 'text',
           text: `Per 100 g macros for ${summary.description}: ${headline}.`
+        }
+      ],
+      structuredContent: {
+        summary,
+        nutrients: nutrientValues
+      }
+    };
+  }
+);
+
+server.registerTool(
+  'get_micros',
+  {
+    title: 'Get Micronutrients',
+    description: 'Return per 100 g vitamins and minerals for a FoodData Central entry (Calcium through B vitamins).',
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+      idempotentHint: true
+    },
+    inputSchema: {
+      fdcId: z.number().int().positive()
+    },
+    outputSchema: nutrientListOutputShape,
+    _meta: {
+      version: '2025-11-07',
+      nutrientKeys: microNutrientKeys,
+      nutrientIds: Array.from(
+        new Set<number>(
+          microNutrientKeys.flatMap((key) => Array.from(NUTRIENT_DEFINITIONS[key].ids.values()))
+        )
+      )
+    }
+  },
+  async (input) => {
+    const { food, matches, aliasInfo } = await fetchFoodForNutrients(input.fdcId, microNutrientKeys);
+    const description = describeFood(food);
+    const nutrientValues = microNutrientKeys.map((key) => buildNutrientValue(key, matches[key]));
+    const missingLabels = nutrientValues
+      .filter((nutrient) => nutrient.valuePer100g === undefined)
+      .map((nutrient) => nutrient.label);
+    const notes: string[] = [];
+    if (aliasInfo) {
+      notes.push(formatAliasNote(aliasInfo, food));
+    }
+    if (missingLabels.length) {
+      notes.push(`Missing values for: ${missingLabels.join(', ')}.`);
+    }
+
+    const summary = {
+      fdcId: input.fdcId,
+      description,
+      ...(notes.length ? { notes } : {})
+    };
+
+    const headline = describeNutrientSeries(nutrientValues);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: headline
+            ? `Micros per 100 g for ${summary.description}: ${headline}.`
+            : `Micros unavailable for ${summary.description}.`
         }
       ],
       structuredContent: {
@@ -1235,7 +1450,7 @@ type NutrientMatch = {
 type NutrientValue = {
   key: NutrientKey;
   label: string;
-  unit: 'g' | 'kcal';
+  unit: NutrientUnit;
   valuePer100g?: number;
   sourceNutrientId?: number;
 };
@@ -1478,10 +1693,7 @@ function formatNutrientAmount(nutrient: NutrientValue): string | undefined {
   if (nutrient.valuePer100g === undefined) {
     return undefined;
   }
-  if (nutrient.unit === 'kcal') {
-    return `${formatMacroValue(nutrient.valuePer100g, false)} kcal`;
-  }
-  return `${formatMacroValue(nutrient.valuePer100g)} g`;
+  return `${formatNutrientValue(nutrient.valuePer100g, nutrient.unit)} ${nutrient.unit}`;
 }
 
 function registerSingleNutrientTool(config: {
@@ -1762,6 +1974,26 @@ function formatMacroValue(value: number, allowDecimals: boolean = true): string 
 
   const rounded = Math.round(value * 100) / 100;
   return rounded.toString();
+}
+
+function formatNutrientValue(value: number, unit: NutrientUnit): string {
+  switch (unit) {
+    case 'kcal':
+      return Math.round(value).toString();
+    case 'g':
+      return formatDecimal(value, 2);
+    case 'mg':
+      return formatDecimal(value, 1);
+    case 'mcg':
+      return Math.round(value).toString();
+    default:
+      return value.toString();
+  }
+}
+
+function formatDecimal(value: number, decimals: number): string {
+  const factor = 10 ** decimals;
+  return (Math.round(value * factor) / factor).toString();
 }
 
 function getRecord(value: unknown): Record<string, unknown> | undefined {

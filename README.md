@@ -2,7 +2,7 @@
 
 Model Context Protocol (MCP) server that exposes USDA FoodData Central search and lookup tools. Plug it into Codex CLI, Claude Desktop, or any MCP-aware client to explore nutrition data without writing HTTP calls by hand.
 
-_Last README sync: base commit `659c6b9` (update after next commit)._ 
+_Last README sync: base commit `f54f8dd` (update after next commit)._ 
 
 ---
 
@@ -184,6 +184,7 @@ All tools return a plain-text summary plus a `structuredContent` payload with a 
 - `search-foods` – Full-text search that only surfaces the food description, optional brand/data type, and `fdcId` so agents can pick an entry without excessive detail. Filters, cursor pagination, sort controls, and dry-run previews help shrink context impact.
 - `get-food` – Fetch a single FoodData Central (FDC) record by ID with optional `format` and `nutrients` filters. Requests default to the faster USDA “abridged” view; the summary highlights macros (when present) and any notable gaps in the response. When USDA retires a known legacy identifier (e.g., SR Legacy 4053 for olive oil), the tool automatically substitutes the documented replacement (Foundation 748608 in this case) and adds a note so you know why the ID changed.
 - `get_macros` – Return per-100 g calories, protein, fat, and carbohydrates for a single FDC entry with structured nutrient metadata. The helper first issues an abridged request scoped to the macro nutrient IDs, escalates to `format=full`, retries again without any nutrient filter, and finally consults `labelNutrients` (including Foundation-style labels such as `Energy`, `Total fat (NLEA)`, and `Total carbohydrate (NLEA)`). If a Foundation record still withholds even one macro after that sequence, the tool now errors with guidance so you can pick a different FDC entry or compute the numbers manually (e.g., 1 g fat ≈ 9 kcal).
+- `get_micros` – Surfaces per-100 g vitamins and minerals (Calcium, Iron, Potassium, Sodium, Magnesium, Zinc, Vitamins A/C/D/E/K, Folate, Vitamins B6/B12). The helper runs through the same nutrient escalation/label parsing path, so most USDA foods return micronutrients without extra work.
 - `get_fats`, `get_protein`, `get_carbs`, `get_kcal`, `get_satfats`, `get_fiber` – Single-nutrient lookups that emit just the requested per-100 g value (or note that it is unavailable) to keep tool output distinct.
 - `get-foods` – Bulk lookup for up to 50 FDC IDs in one call. Supports `previewOnly`, `includeRaw`, `sampleSize`, and `estimateOnly` so you can review lightweight previews before retrieving the full objects, defaults to the faster USDA “abridged” format, and flags any requested IDs the USDA API omits. Known legacy → replacement mappings (e.g., 4053 → 748608) are applied automatically and noted in the summary.
 - `list-foods` – Deterministic paginated listing that accepts optional `filters` (data types, brand owner), cursor-based `pagination`, `sort`, and the same preview/dry-run switches as `search-foods`. The summary returns the next cursor only when another page is likely available.
@@ -198,6 +199,29 @@ Foundation datasets sometimes omit energy, protein, or carbohydrate rows entirel
 4. Reads `labelNutrients`, including Foundation label names such as `Energy (kcal)`, `Total fat (NLEA)`, `Protein (NLEA)`, and `Total carbohydrate (NLEA)` even when USDA exposes those values only under display-friendly keys.
 
 If any macro is still missing *and* the entry’s `dataType` is `Foundation`, `get_macros` stops with an error that lists the missing fields and suggests either switching to a record that publishes macros (e.g., SR Legacy or Survey entries) or deriving them yourself. A quick rule of thumb: calories ≈ `(fat_g * 9) + (protein_g * 4) + (carbs_g * 4)`. Some oils (including FDC 748608) still omit USDA-provided calories/protein/carbs entirely across abridged/full/label payloads—this is a USDA database gap, not an MCP parsing bug—so keep the manual derivation handy for edge cases that never expose those fields.
+
+### Micronutrient coverage (`get_micros`)
+
+USDA keeps dozens of micronutrients in FoodData Central. The `get_micros` tool focuses on the vitamins and minerals that appear on standard nutrition labels so agents can request them in one call. Each value is per 100 g and travels through the same abridged/full/label fallback path used by `get_macros`.
+
+| Nutrient | Unit | USDA nutrient IDs (abridged/full) | Label aliases |
+| --- | --- | --- | --- |
+| Calcium | mg | 1087, 301 | `calcium` |
+| Iron | mg | 1089, 303 | `iron` |
+| Potassium | mg | 1092, 306 | `potassium` |
+| Sodium | mg | 1093, 307 | `sodium` |
+| Magnesium | mg | 1090, 304 | `magnesium` |
+| Zinc | mg | 1095, 309 | `zinc` |
+| Vitamin A (RAE) | mcg | 1104, 318 | `vitaminA`, `vitamin a` |
+| Vitamin C | mg | 1162, 401 | `vitaminC`, `vitamin c` |
+| Vitamin D (D2 + D3) | mcg | 1114, 324, 328 | `vitaminD`, `vitamin d` |
+| Vitamin E (alpha-tocopherol) | mg | 1109, 323 | `vitaminE`, `vitamin e` |
+| Vitamin K (phylloquinone) | mcg | 1185, 430 | `vitaminK`, `vitamin k` |
+| Folate, total | mcg | 1186, 417 | `folate` |
+| Vitamin B6 | mg | 1175, 415 | `vitaminB6`, `vitamin b-6` |
+| Vitamin B12 | mcg | 1178, 418 | `vitaminB12`, `vitamin b-12` |
+
+If a micronutrient is absent from both the nutrient list and `labelNutrients`, the response lists it under `summary.notes` so downstream automation can decide whether to fall back to manual data.
 
 ---
 
@@ -244,6 +268,7 @@ Run `npm run build` whenever you change server code and want Codex or other clie
 - **Repeated 429 Too Many Requests** – Each tool already slows calls to one at a time; if you still get 429 responses, wait for the `Retry-After` duration shown in the error text or batch IDs into fewer round-trips.
 - **Legacy FDC ID returns “not found”** – USDA periodically retires SR Legacy entries. Known substitutions (currently 4053 → 748608 for olive oil) are applied automatically and annotated in the tool response; otherwise, use `search-foods` to locate the modern FDC ID.
 - **Foundation macros come back empty** – `get_macros` escalates through full/unfiltered calls plus `labelNutrients`, including Foundation display labels such as `Energy (kcal)` and `Total fat (NLEA)`. When a record still hides macros after that sweep, the tool errors with the missing fields. Pick another FDC ID that exposes macros (SR Legacy or Survey datasets usually do) or estimate calories via `(fat_g * 9) + (protein_g * 4) + (carbs_g * 4)` (oils generally have protein/carbs = 0). FDC 748608 is a known USDA data gap: only the fat numbers are published, so manual macros are required.
+- **Micronutrients missing** – `get_micros` reports which vitamins/minerals are unavailable in `summary.notes`. That usually means the USDA record never published the nutrient; check `get-food` for the raw payload or substitute a richer FDC ID if you need the value.
 - **No generic entry for an ingredient (e.g., ground sumac)** – Document the decision in `usda_rebuild_progress.md`. Ground sumac uses branded FDC 2630657 as the accepted entry today; for other ingredients without an acceptable record, note the manual macros and rationale so contributors avoid duplicate searches.
 - **CLI warns about missing `dist/server.js`** – Run `npm run build` before invoking `npx usda-mcp`.
 
