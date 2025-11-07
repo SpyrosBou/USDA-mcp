@@ -782,6 +782,7 @@ const microNutrientKeys: NutrientKey[] = [
   'vitaminB6',
   'vitaminB12'
 ];
+const macroMicronutrientKeys: NutrientKey[] = [...macroNutrientKeys, ...microNutrientKeys];
 
 server.registerTool(
   'get_macros',
@@ -910,6 +911,84 @@ server.registerTool(
           text: headline
             ? `Micros per 100 g for ${summary.description}: ${headline}.`
             : `Micros unavailable for ${summary.description}.`
+        }
+      ],
+      structuredContent: {
+        summary,
+        nutrients: nutrientValues
+      }
+    };
+  }
+);
+
+server.registerTool(
+  'get_macro_micros',
+  {
+    title: 'Get Macros + Micros',
+    description: 'Return per 100 g macro plus vitamin/mineral panels for a FoodData Central entry.',
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+      idempotentHint: true
+    },
+    inputSchema: {
+      fdcId: z.number().int().positive()
+    },
+    outputSchema: nutrientListOutputShape,
+    _meta: {
+      version: '2025-11-07',
+      nutrientKeys: macroMicronutrientKeys,
+      nutrientIds: Array.from(
+        new Set<number>(
+          macroMicronutrientKeys.flatMap((key) => Array.from(NUTRIENT_DEFINITIONS[key].ids.values()))
+        )
+      )
+    }
+  },
+  async (input) => {
+    const { food, matches, aliasInfo } = await fetchFoodForNutrients(input.fdcId, macroMicronutrientKeys);
+    const recordMeta = getRecord(food);
+    const dataType =
+      typeof recordMeta?.dataType === 'string' ? recordMeta.dataType.trim().toLowerCase() : undefined;
+    const description = describeFood(food);
+    const nutrientValues = macroMicronutrientKeys.map((key) => buildNutrientValue(key, matches[key]));
+    const missingMacros = macroNutrientKeys
+      .map((key) => buildNutrientValue(key, matches[key]))
+      .filter((nutrient) => nutrient.valuePer100g === undefined)
+      .map((nutrient) => nutrient.label);
+    if (dataType === 'foundation' && missingMacros.length) {
+      const aliasSuffix = aliasInfo ? ` ${formatAliasNote(aliasInfo, food)}` : '';
+      const missingText = missingMacros.join(', ');
+      throw new Error(
+        `Foundation entry ${description} omits ${missingText}. Choose an FDC record that lists macros or derive the values manually.${aliasSuffix}`
+      );
+    }
+    const notes: string[] = [];
+    if (aliasInfo) {
+      notes.push(formatAliasNote(aliasInfo, food));
+    }
+    const missingAll = nutrientValues
+      .filter((nutrient) => nutrient.valuePer100g === undefined)
+      .map((nutrient) => nutrient.label);
+    if (missingAll.length) {
+      notes.push(`Missing values for: ${missingAll.join(', ')}.`);
+    }
+
+    const summary = {
+      fdcId: input.fdcId,
+      description,
+      ...(notes.length ? { notes } : {})
+    };
+
+    const headline = describeNutrientSeries(nutrientValues);
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: headline
+            ? `Per 100 g macros + micros for ${summary.description}: ${headline}.`
+            : `Macros and micros unavailable for ${summary.description}.`
         }
       ],
       structuredContent: {
