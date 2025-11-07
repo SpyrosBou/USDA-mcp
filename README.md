@@ -2,7 +2,7 @@
 
 Model Context Protocol (MCP) server that exposes USDA FoodData Central search and lookup tools. Plug it into Codex CLI, Claude Desktop, or any MCP-aware client to explore nutrition data without writing HTTP calls by hand.
 
-_Last README sync: base commit `f84afc0` (update after next commit)._ 
+_Last README sync: base commit `d3a3fa1` (update after next commit)._ 
 
 ---
 
@@ -183,10 +183,21 @@ All tools return a plain-text summary plus a `structuredContent` payload with a 
 
 - `search-foods` – Full-text search that only surfaces the food description, optional brand/data type, and `fdcId` so agents can pick an entry without excessive detail. Filters, cursor pagination, sort controls, and dry-run previews help shrink context impact.
 - `get-food` – Fetch a single FoodData Central (FDC) record by ID with optional `format` and `nutrients` filters. Requests default to the faster USDA “abridged” view; the summary highlights macros (when present) and any notable gaps in the response. When USDA retires a known legacy identifier (e.g., SR Legacy 4053 for olive oil), the tool automatically substitutes the documented replacement (Foundation 748608 in this case) and adds a note so you know why the ID changed.
-- `get_macros` – Return per-100 g calories, protein, fat, and carbohydrates for a single FDC entry with structured nutrient metadata. When USDA omits a macro from filtered `foodNutrients` responses (common with Foundation foods), the tool transparently retries without nutrient filters and falls back to `labelNutrients` so macros continue to populate, and it now errors if a Foundation record still lacks any macro so you can switch to an entry that publishes the values.
+- `get_macros` – Return per-100 g calories, protein, fat, and carbohydrates for a single FDC entry with structured nutrient metadata. The helper first issues an abridged request scoped to the macro nutrient IDs, escalates to `format=full`, retries again without any nutrient filter, and finally consults `labelNutrients`. If a Foundation record still withholds even one macro after that sequence, the tool now errors with guidance so you can pick a different FDC entry or compute the numbers manually (e.g., 1 g fat ≈ 9 kcal).
 - `get_fats`, `get_protein`, `get_carbs`, `get_kcal`, `get_satfats`, `get_fiber` – Single-nutrient lookups that emit just the requested per-100 g value (or note that it is unavailable) to keep tool output distinct.
 - `get-foods` – Bulk lookup for up to 50 FDC IDs in one call. Supports `previewOnly`, `includeRaw`, `sampleSize`, and `estimateOnly` so you can review lightweight previews before retrieving the full objects, defaults to the faster USDA “abridged” format, and flags any requested IDs the USDA API omits. Known legacy → replacement mappings (e.g., 4053 → 748608) are applied automatically and noted in the summary.
 - `list-foods` – Deterministic paginated listing that accepts optional `filters` (data types, brand owner), cursor-based `pagination`, `sort`, and the same preview/dry-run switches as `search-foods`. The summary returns the next cursor only when another page is likely available.
+
+### Handling Foundation entries without USDA macros
+
+Foundation datasets sometimes omit energy, protein, or carbohydrate rows entirely (pure oils often only list lipid chemistry). The macro helper therefore:
+
+1. Requests the abridged payload scoped to the calorie/protein/fat/carbohydrate nutrient IDs.
+2. Falls back to `format=full` so USDA can include “analysis only” nutrients.
+3. Retries the abridged call without nutrient filters so the API can decide which nutrients to include.
+4. Reads `labelNutrients` when present.
+
+If any macro is still missing *and* the entry’s `dataType` is `Foundation`, `get_macros` stops with an error that lists the missing fields and suggests either switching to a record that publishes macros (e.g., SR Legacy or Survey entries) or deriving them yourself. A quick rule of thumb: calories ≈ `(fat_g * 9) + (protein_g * 4) + (carbs_g * 4)`. For the current olive-oil replacement (FDC 748608), USDA only publishes fat, so macros must be inferred externally.
 
 ---
 
@@ -201,7 +212,7 @@ All tools return a plain-text summary plus a `structuredContent` payload with a 
 - Requests time out after 30 seconds, use up to two retries with jittered exponential backoff on HTTP 429 or 5xx, and throttle to one concurrent call with ≥400 ms spacing so we stay under the 3 requests/second USDA ceiling. When USDA asks for a longer pause (via `Retry-After`), that guidance is surfaced in the error text.
 - Handle USDA rate limits responsibly: use narrow filters, reuse previous results, and avoid large bulk queries unless necessary.
 - Missing or invalid API keys cause the server to log the issue and exit immediately so MCP clients can surface the error.
-- Nutrient helpers automatically retry Foundation foods with `format=full` and then unfiltered abridged requests whenever filtered calls omit any requested macros, and they understand alternate labels such as `Total fat (NLEA)` so oils and other sparse entries still return macro values; if a Foundation record still refuses to surface a macro after those retries, `get_macros` aborts with guidance so you can select a different FDC entry or derive the value yourself.
+- Nutrient helpers follow a strict escalation path (scoped abridged → `format=full` → unfiltered abridged → `labelNutrients`) and recognise alternate labels such as `Total fat (NLEA)` so oils and other sparse entries still return macro values. When a Foundation record still hides any macro after those retries, `get_macros` intentionally errors and points you to alternate FDC IDs or the calorie conversion formula so downstream automations do not ingest partial data unknowingly.
 - Legacy SR Legacy identifiers that USDA has retired (currently 4053 for olive oil) are automatically mapped to their documented replacement IDs, and every substitution is called out in the tool summaries (plus `requestedFdcIds` in the preview payload) so downstream automations can update their catalogs.
 
 ---
@@ -222,7 +233,7 @@ Run `npm run build` whenever you change server code and want Codex or other clie
 - **Client connects but requests fail with 401/403** – Verify the key is active and not rate-limited on the USDA side.
 - **Repeated 429 Too Many Requests** – Each tool already slows calls to one at a time; if you still get 429 responses, wait for the `Retry-After` duration shown in the error text or batch IDs into fewer round-trips.
 - **Legacy FDC ID returns “not found”** – USDA periodically retires SR Legacy entries. Known substitutions (currently 4053 → 748608 for olive oil) are applied automatically and annotated in the tool response; otherwise, use `search-foods` to locate the modern FDC ID.
-- **Foundation macros come back empty** – The helper falls back to a `format=full` request and recognises labels like `Total fat (NLEA)`. If calories, protein, or carbs still show as missing it means USDA never published those values for that entry (common for pure oils).
+- **Foundation macros come back empty** – `get_macros` escalates through full/unfiltered calls plus `labelNutrients`. When a Foundation record still lacks macros, the tool now errors with the missing fields listed. Pick another FDC ID that exposes macros (SR Legacy or Survey datasets usually do) or estimate the calories via `(fat_g * 9) + (protein_g * 4) + (carbs_g * 4)` (oils generally have protein/carbs = 0).
 - **CLI warns about missing `dist/server.js`** – Run `npm run build` before invoking `npx usda-mcp`.
 
 For API reference, see the official FoodData Central guide: https://fdc.nal.usda.gov/api-guide.html
