@@ -201,7 +201,7 @@ Foundation datasets sometimes omit energy, protein, or carbohydrate rows entirel
 
 If any macro is still missing *and* the entry’s `dataType` is `Foundation`, `get_macros` stops with an error that lists the missing fields and suggests either switching to a record that publishes macros (e.g., SR Legacy or Survey entries) or deriving them yourself. A quick rule of thumb: calories ≈ `(fat_g * 9) + (protein_g * 4) + (carbs_g * 4)`. Some oils (including FDC 748608) still omit USDA-provided calories/protein/carbs entirely across abridged/full/label payloads—this is a USDA database gap, not an MCP parsing bug—so keep the manual derivation handy for edge cases that never expose those fields.
 
-Need both macro and micronutrient panels simultaneously? Call `get_macro_micros` to collapse the workflow into a single USDA request. It enforces the same Foundation guard for missing macros and surfaces any micronutrient gaps in the summary.
+Need both macro and micronutrient panels simultaneously? Call `get_macro_micros` to collapse the workflow into a single USDA request. It enforces the same Foundation guard for missing macros, surfaces micronutrient gaps in the summary, and automatically falls back to an unfiltered USDA fetch if the combined nutrient filter list exceeds USDA’s request limit (so you still get data, just with a slightly larger payload).
 ### Micronutrient coverage (`get_micros`)
 
 USDA keeps dozens of micronutrients in FoodData Central. The `get_micros` tool focuses on the vitamins and minerals that appear on standard nutrition labels so agents can request them in one call. Each value is per 100 g and travels through the same abridged/full/label fallback path used by `get_macros`.

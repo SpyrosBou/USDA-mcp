@@ -1706,7 +1706,24 @@ async function fetchFoodForNutrients(
 
   for (let index = 0; index < attempts.length; index += 1) {
     const attempt = attempts[index];
-    const fetched = await fetchFoodWithAlias(fdcId, attempt);
+
+    let fetched: { food: FoodItem; resolvedFdcId: number; aliasInfo?: AliasResolution };
+    try {
+      fetched = await fetchFoodWithAlias(fdcId, attempt);
+    } catch (error) {
+      if (
+        attempt.nutrients &&
+        attempt.nutrients.length > 0 &&
+        error instanceof FoodDataCentralError &&
+        error.status === 400
+      ) {
+        // USDA rejects long nutrient filter lists (>~30 IDs). Skip this attempt and
+        // fall back to the unfiltered/full retries already queued.
+        continue;
+      }
+      throw error;
+    }
+
     if (!aliasInfo && fetched.aliasInfo) {
       aliasInfo = fetched.aliasInfo;
     }
