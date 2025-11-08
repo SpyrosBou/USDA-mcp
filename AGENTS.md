@@ -32,7 +32,7 @@
 ## Configuration Notes
 - Never commit `.env`; manage secrets via environment variables or workspace overrides.
 - `USDA_API_KEY` is mandatory—ensure documentation stays aligned whenever the acquisition flow changes and update `src/config.ts`, this guide, and `README.md` if additional requirements appear.
-- Local development convenience: the current working copy keeps `USDA_API_KEY` in `.env` (see repo root). Use that file when running commands manually, but continue to source keys from MCP client config in shared environments.
+- Local development convenience: the current working copy keeps `USDA_API_KEY` in `.env` (see repo root). When you need that variable in child processes (e.g., `node` scripts or manual MCP calls), run `set -a && source .env && set +a` first so the variables are exported; otherwise `process.env.USDA_API_KEY` will be `undefined`. Use MCP client config for shared environments.
 - `config://usda-fooddata/environment` exposes configuration and operational guidance as a read-only MCP resource—keep it accurate when defaults change.
 - Track ingredient coverage decisions in `usda_rebuild_progress.md`. Log every “no USDA equivalent” call (e.g., ground sumac currently only has branded ID 2630657, composite salt+pepper blends stay manual) so contributors can skip redundant lookups and know which macros come from internal formulations.
 - USDA requests are throttled (1 concurrent call, ≥400 ms spacing) with up to two retries on HTTP 429/5xx or timeouts; adjust documentation and the `config://usda-fooddata/environment` resource if these limits move.
