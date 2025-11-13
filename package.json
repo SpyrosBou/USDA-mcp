@@ -1,5 +1,5 @@
 {
-  "name": "usda-mcp-server",
+  "name": "usda-mcp",
   "version": "1.0.0",
   "description": "Model Context Protocol server exposing tools for the USDA FoodData Central API.",
   "type": "module",
@@ -19,7 +19,7 @@
     "fooddata",
     "server"
   ],
-  "author": "",
+  "author": "Spyros Bourtzalas",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.20.2",
