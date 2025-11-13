@@ -2,7 +2,7 @@
 
 Model Context Protocol (MCP) server that exposes USDA FoodData Central search and lookup tools. Plug it into Codex CLI, Claude Desktop, or any MCP-aware client to explore nutrition data without writing HTTP calls by hand.
 
-_Last README sync: base commit `632708f` (update after next commit)._ 
+_Last README sync: base commit `8f49a48` (update after next commit)._ 
 
 ---
 

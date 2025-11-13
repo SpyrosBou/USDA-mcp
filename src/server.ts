@@ -24,7 +24,7 @@ const serverInstructions = [
 const server = new McpServer(
   {
     name: 'usda-fooddata-central',
-    version: '0.2.0'
+    version: '1.0.0'
   },
   {
     instructions: serverInstructions
