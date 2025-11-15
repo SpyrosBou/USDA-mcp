@@ -517,6 +517,7 @@ const nutrientValueSchema = z
     label: z.string(),
     unit: z.enum(['g', 'kcal', 'mg', 'mcg']),
     valuePer100g: z.number().nonnegative().optional(),
+    valuePerPortion: z.number().nonnegative().optional(),
     sourceNutrientId: z.number().optional()
   })
   .strict();
@@ -526,6 +527,7 @@ const singleNutrientOutputShape = {
     .object({
       fdcId: z.number(),
       description: z.string(),
+      dataType: z.string().optional(),
       notes: z.array(z.string()).optional()
     })
     .strict(),
@@ -540,6 +542,75 @@ const nutrientListOutputShape = {
       notes: z.array(z.string()).optional()
     })
     .strict(),
+  nutrients: z.array(nutrientValueSchema)
+} satisfies ZodRawShape;
+
+const categoryEntrySchema = z
+  .object({
+    kind: z.enum(['foodCategory', 'brandedFoodCategory', 'wweiaFoodCategory']),
+    id: z.number().int().optional(),
+    code: z.string().optional(),
+    description: z.string()
+  })
+  .strict();
+
+const categoryListOutputShape = {
+  summary: z
+    .object({
+      fdcId: z.number(),
+      description: z.string(),
+      dataType: z.string().optional(),
+      notes: z.array(z.string()).optional()
+    })
+    .strict(),
+  categories: z.array(categoryEntrySchema)
+} satisfies ZodRawShape;
+
+const portionEntrySchema = z
+  .object({
+    id: z.number().int().optional(),
+    amount: z.number().optional(),
+    portionDescription: z.string().optional(),
+    gramWeight: z.number().optional(),
+    measureUnit: z
+      .object({
+        id: z.number().int().optional(),
+        abbreviation: z.string().optional(),
+        name: z.string().optional()
+      })
+      .strict()
+      .optional()
+  })
+  .strict();
+
+const portionListOutputShape = {
+  summary: z
+    .object({
+      fdcId: z.number(),
+      description: z.string(),
+      dataType: z.string().optional(),
+      notes: z.array(z.string()).optional()
+    })
+    .strict(),
+  portions: z.array(portionEntrySchema)
+} satisfies ZodRawShape;
+
+const macroPortionSummarySchema = z
+  .object({
+    fdcId: z.number(),
+    description: z.string(),
+    dataType: z.string().optional(),
+    portionId: z.number().int().optional(),
+    portionIndex: z.number().int().min(0).optional(),
+    amount: z.number().optional(),
+    portionDescription: z.string().optional(),
+    gramWeight: z.number().optional(),
+    notes: z.array(z.string()).optional()
+  })
+  .strict();
+
+const macroPortionOutputShape = {
+  summary: macroPortionSummarySchema,
   nutrients: z.array(nutrientValueSchema)
 } satisfies ZodRawShape;
 
@@ -745,6 +816,10 @@ server.registerTool(
     const summary = {
       fdcId: input.fdcId,
       description: describeFood(food),
+      dataType:
+        typeof (getRecord(food)?.dataType) === 'string'
+          ? (getRecord(food)?.dataType as string)
+          : undefined,
       ...(macros ? { macros } : {}),
       ...(summaryNotes.length ? { notes: summaryNotes } : {})
     };
@@ -760,6 +835,117 @@ server.registerTool(
         summary,
         food,
         ...(macros ? { macros } : {})
+      }
+    };
+  }
+);
+
+server.registerTool(
+  'get_categories',
+  {
+    title: 'Get Food Categories',
+    description:
+      'Return category tags for a FoodData Central entry, including FoodCategory, brandedFoodCategory, and WweiaFoodCategory when available.',
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+      idempotentHint: true
+    },
+    inputSchema: {
+      fdcId: z.number().int().positive()
+    },
+    outputSchema: categoryListOutputShape,
+    _meta: {
+      version: '2025-11-15'
+    }
+  },
+  async (input) => {
+    const { food, aliasInfo } = await fetchFoodWithAlias(input.fdcId, { format: 'full' });
+    const record = getRecord(food) ?? {};
+    const dataType = typeof record.dataType === 'string' ? record.dataType : undefined;
+
+    const categories: Array<z.infer<typeof categoryEntrySchema>> = [];
+
+    const foodCategory = getRecord(record.foodCategory);
+    if (foodCategory) {
+      const id = toFiniteNumber(foodCategory.id);
+      const code =
+        typeof foodCategory.code === 'string' && foodCategory.code.trim() !== ''
+          ? foodCategory.code
+          : undefined;
+      const description =
+        typeof foodCategory.description === 'string' && foodCategory.description.trim() !== ''
+          ? foodCategory.description
+          : undefined;
+      if (description) {
+        categories.push({
+          kind: 'foodCategory',
+          ...(id !== undefined ? { id } : {}),
+          ...(code ? { code } : {}),
+          description
+        });
+      }
+    }
+
+    if (typeof record.brandedFoodCategory === 'string' && record.brandedFoodCategory.trim() !== '') {
+      categories.push({
+        kind: 'brandedFoodCategory',
+        description: record.brandedFoodCategory
+      });
+    }
+
+    const wweia = getRecord(record.wweiaFoodCategory);
+    if (wweia) {
+      const code = toFiniteNumber(wweia.wweiaFoodCategoryCode);
+      const description =
+        typeof wweia.wweiaFoodCategoryDescription === 'string' &&
+        wweia.wweiaFoodCategoryDescription.trim() !== ''
+          ? wweia.wweiaFoodCategoryDescription
+          : undefined;
+      if (description) {
+        categories.push({
+          kind: 'wweiaFoodCategory',
+          ...(code !== undefined ? { id: code } : {}),
+          description
+        });
+      }
+    }
+
+    const notes: string[] = [];
+    if (aliasInfo) {
+      notes.push(formatAliasNote(aliasInfo, food));
+    }
+    if (!categories.length) {
+      notes.push('No category fields found on this USDA record.');
+    }
+
+    const summary = {
+      fdcId: input.fdcId,
+      description: describeFood(food),
+      ...(dataType ? { dataType } : {}),
+      ...(notes.length ? { notes } : {})
+    };
+
+    const headlineParts: string[] = [];
+    for (const category of categories) {
+      const label = category.kind === 'wweiaFoodCategory' ? 'WWEIA' : category.kind;
+      headlineParts.push(`${label}: ${category.description}`);
+    }
+    const headline =
+      headlineParts.length > 0
+        ? `Categories for ${summary.description}: ${headlineParts.join('; ')}.`
+        : `No categories found for ${summary.description}.`;
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: headline
+        }
+      ],
+      structuredContent: {
+        summary,
+        categories
       }
     };
   }
@@ -1046,6 +1232,305 @@ const singleNutrientTools: Array<{
 for (const tool of singleNutrientTools) {
   registerSingleNutrientTool(tool);
 }
+
+server.registerTool(
+  'list_portions',
+  {
+    title: 'List Portions',
+    description:
+      'Return labeled portion sizes for a FoodData Central entry, including gram weights when available.',
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+      idempotentHint: true
+    },
+    inputSchema: {
+      fdcId: z.number().int().positive()
+    },
+    outputSchema: portionListOutputShape,
+    _meta: {
+      version: '2025-11-15'
+    }
+  },
+  async (input) => {
+    const { food, aliasInfo } = await fetchFoodWithAlias(input.fdcId, { format: 'full' });
+    const record = getRecord(food) ?? {};
+    const dataType = typeof record.dataType === 'string' ? record.dataType : undefined;
+
+    const rawPortions = Array.isArray(record.foodPortions) ? record.foodPortions : [];
+    const portions: Array<z.infer<typeof portionEntrySchema>> = [];
+
+    for (const entry of rawPortions) {
+      const portion = getRecord(entry);
+      if (!portion) continue;
+
+      const id = toFiniteNumber(portion.id);
+      const amount = toFiniteNumber(portion.amount);
+      const gramWeight = toFiniteNumber(portion.gramWeight);
+      const portionDescription =
+        typeof portion.portionDescription === 'string' && portion.portionDescription.trim() !== ''
+          ? portion.portionDescription
+          : undefined;
+
+      const measureUnitRecord = getRecord(portion.measureUnit);
+      const measureUnit =
+        measureUnitRecord &&
+        (typeof measureUnitRecord.abbreviation === 'string' ||
+          typeof measureUnitRecord.name === 'string' ||
+          measureUnitRecord.id !== undefined)
+          ? {
+              ...(toFiniteNumber(measureUnitRecord.id) !== undefined
+                ? { id: toFiniteNumber(measureUnitRecord.id) }
+                : {}),
+              ...(typeof measureUnitRecord.abbreviation === 'string'
+                ? { abbreviation: measureUnitRecord.abbreviation }
+                : {}),
+              ...(typeof measureUnitRecord.name === 'string'
+                ? { name: measureUnitRecord.name }
+                : {})
+            }
+          : undefined;
+
+      if (portionDescription || gramWeight !== undefined || amount !== undefined || measureUnit) {
+        portions.push({
+          ...(id !== undefined ? { id } : {}),
+          ...(amount !== undefined ? { amount } : {}),
+          ...(portionDescription ? { portionDescription } : {}),
+          ...(gramWeight !== undefined ? { gramWeight } : {}),
+          ...(measureUnit ? { measureUnit } : {})
+        });
+      }
+    }
+
+    const notes: string[] = [];
+    if (aliasInfo) {
+      notes.push(formatAliasNote(aliasInfo, food));
+    }
+    if (!portions.length) {
+      notes.push('No foodPortions data found on this USDA record.');
+    }
+
+    const summary = {
+      fdcId: input.fdcId,
+      description: describeFood(food),
+      ...(dataType ? { dataType } : {}),
+      ...(notes.length ? { notes } : {})
+    };
+
+    const headline =
+      portions.length > 0
+        ? `Found ${portions.length} portion${portions.length === 1 ? '' : 's'} for ${summary.description}.`
+        : `No labeled portions found for ${summary.description}.`;
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: headline
+        }
+      ],
+      structuredContent: {
+        summary,
+        portions
+      }
+    };
+  }
+);
+
+server.registerTool(
+  'macros_for_portion',
+  {
+    title: 'Macros for Portion',
+    description:
+      'Return calories, protein, fat, and carbohydrates for a specific USDA-defined portion of a FoodData Central entry.',
+    annotations: {
+      readOnlyHint: true,
+      openWorldHint: false,
+      idempotentHint: true
+    },
+    inputSchema: {
+      fdcId: z.number().int().positive(),
+      portionId: z.number().int().optional(),
+      portionIndex: z.number().int().min(0).optional()
+    },
+    outputSchema: macroPortionOutputShape,
+    _meta: {
+      version: '2025-11-15',
+      nutrientKeys: macroNutrientKeys
+    }
+  },
+  async (input) => {
+    const { portionId, portionIndex } = input;
+    const hasPortionId = typeof portionId === 'number';
+    const hasPortionIndex = typeof portionIndex === 'number';
+    if ((hasPortionId && hasPortionIndex) || (!hasPortionId && !hasPortionIndex)) {
+      throw new Error('Provide exactly one of portionId or portionIndex. Call list_portions first to inspect available portions.');
+    }
+
+    const nutrientResult = await fetchFoodForNutrients(input.fdcId, macroNutrientKeys);
+    const { matches, aliasInfo: aliasFromNutrients } = nutrientResult;
+
+    const fullResult = await fetchFoodWithAlias(input.fdcId, { format: 'full' });
+    const food = fullResult.food;
+    const aliasInfo = fullResult.aliasInfo ?? aliasFromNutrients;
+
+    const record = getRecord(food) ?? {};
+    const dataType = typeof record.dataType === 'string' ? record.dataType : undefined;
+
+    const rawPortions = Array.isArray(record.foodPortions) ? record.foodPortions : [];
+    if (!rawPortions.length) {
+      const description = describeFood(food);
+      throw new Error(
+        `USDA record for ${description} has no foodPortions data. Use get_macros for per-100 g values or choose a different FDC ID.`
+      );
+    }
+
+    let selectedPortionRecord: Record<string, unknown> | undefined;
+    let resolvedIndex: number | undefined;
+
+    if (hasPortionId) {
+      const targetId = portionId as number;
+      for (let index = 0; index < rawPortions.length; index += 1) {
+        const portion = getRecord(rawPortions[index]);
+        if (!portion) continue;
+        const id = toFiniteNumber(portion.id);
+        if (id !== undefined && id === targetId) {
+          selectedPortionRecord = portion;
+          resolvedIndex = index;
+          break;
+        }
+      }
+      if (!selectedPortionRecord) {
+        const description = describeFood(food);
+        throw new Error(
+          `Portion with id ${targetId} not found for ${description}. Call list_portions to see valid portion ids.`
+        );
+      }
+    } else if (hasPortionIndex) {
+      const index = portionIndex as number;
+      if (index < 0 || index >= rawPortions.length) {
+        const description = describeFood(food);
+        throw new Error(
+          `portionIndex ${index} is out of range for ${description}. Call list_portions to see valid indices.`
+        );
+      }
+      const portion = getRecord(rawPortions[index]);
+      if (!portion) {
+        const description = describeFood(food);
+        throw new Error(
+          `Portion at index ${index} is not a valid object for ${description}.`
+        );
+      }
+      selectedPortionRecord = portion;
+      resolvedIndex = index;
+    }
+
+    if (!selectedPortionRecord || resolvedIndex === undefined) {
+      const description = describeFood(food);
+      throw new Error(`Unable to resolve selected portion for ${description}.`);
+    }
+
+    const grams = toFiniteNumber(selectedPortionRecord.gramWeight);
+    const amount = toFiniteNumber(selectedPortionRecord.amount);
+    const portionDescription =
+      typeof selectedPortionRecord.portionDescription === 'string' &&
+      selectedPortionRecord.portionDescription.trim() !== ''
+        ? selectedPortionRecord.portionDescription
+        : undefined;
+
+    const notes: string[] = [];
+    if (aliasInfo) {
+      notes.push(formatAliasNote(aliasInfo, food));
+    }
+
+    const missingLabels = macroNutrientKeys
+      .filter((key) => !matches[key])
+      .map((key) => NUTRIENT_DEFINITIONS[key].label);
+
+    const recordMeta = getRecord(food);
+    const normalizedDataType =
+      typeof recordMeta?.dataType === 'string' ? recordMeta.dataType.trim().toLowerCase() : undefined;
+
+    if (normalizedDataType === 'foundation' && missingLabels.length) {
+      const description = describeFood(food);
+      const aliasSuffix = aliasInfo ? ` ${formatAliasNote(aliasInfo, food)}` : '';
+      const missingText = missingLabels.join(', ');
+      throw new Error(
+        `Foundation entry ${description} omits ${missingText}. Choose an FDC record that lists macros or derive the values manually.${aliasSuffix}`
+      );
+    }
+
+    if (missingLabels.length) {
+      notes.push(`Missing macro values for: ${missingLabels.join(', ')}.`);
+    }
+
+    if (grams === undefined) {
+      notes.push('Selected portion is missing gramWeight; returning per-100 g macros only.');
+    }
+
+    const nutrients = macroNutrientKeys.map((key) => {
+      const match = matches[key];
+      const base = buildNutrientValue(key, match);
+
+      if (grams !== undefined && base.valuePer100g !== undefined) {
+        base.valuePerPortion = (base.valuePer100g * grams) / 100;
+      }
+
+      return base;
+    });
+
+    const summary = {
+      fdcId: input.fdcId,
+      description: describeFood(food),
+      ...(dataType ? { dataType } : {}),
+      ...(typeof selectedPortionRecord.id === 'number'
+        ? { portionId: selectedPortionRecord.id as number }
+        : {}),
+      ...(resolvedIndex !== undefined ? { portionIndex: resolvedIndex } : {}),
+      ...(amount !== undefined ? { amount } : {}),
+      ...(portionDescription ? { portionDescription } : {}),
+      ...(grams !== undefined ? { gramWeight: grams } : {}),
+      ...(notes.length ? { notes } : {})
+    };
+
+    const portionHeadlineParts: string[] = [];
+    for (const nutrient of nutrients) {
+      if (nutrient.valuePerPortion === undefined) {
+        continue;
+      }
+      const formatted = formatNutrientValue(nutrient.valuePerPortion, nutrient.unit);
+      portionHeadlineParts.push(
+        `${nutrient.label.toLowerCase()} ${formatted} ${nutrient.unit}`
+      );
+    }
+
+    const portionLabel = portionDescription
+      ? `${portionDescription}${grams !== undefined ? ` (${grams} g)` : ''}`
+      : grams !== undefined
+        ? `${grams} g`
+        : 'selected portion';
+
+    const headline =
+      portionHeadlineParts.length && grams !== undefined
+        ? `Macros for ${portionLabel} of ${summary.description}: ${portionHeadlineParts.join(', ')}.`
+        : `Per-100 g macros for ${summary.description}: ${describeMacroSummary(
+            extractMacroSummary(food)
+          )}`;
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: headline
+        }
+      ],
+      structuredContent: {
+        summary,
+        nutrients
+      }
+    };
+  }
+);
 
 server.registerTool(
   'get-foods',
@@ -1531,6 +2016,7 @@ type NutrientValue = {
   label: string;
   unit: NutrientUnit;
   valuePer100g?: number;
+  valuePerPortion?: number;
   sourceNutrientId?: number;
 };
 
