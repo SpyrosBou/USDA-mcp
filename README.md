@@ -2,7 +2,7 @@
 
 Model Context Protocol (MCP) server that exposes USDA FoodData Central search and lookup tools. Plug it into Codex CLI, Claude Desktop, or any MCP-aware client to explore nutrition data without writing HTTP calls by hand.
 
-_Last README sync: base commit `8f49a48` (update after next commit)._ 
+_Last README sync: base commit `7dede6c` (update after next commit)._
 
 ---
 
@@ -55,9 +55,9 @@ npx usda-mcp            # assumes USDA_API_KEY is exported or supplied by the cl
 
 Environment variables read at startup:
 
-| Variable            | Required | Default | Purpose                                                                     |
-| ------------------- | -------- | ------- | --------------------------------------------------------------------------- |
-| `USDA_API_KEY`      | Yes      | —       | FoodData Central API key; server exits if unset.                            |
+| Variable            | Required | Default                            | Purpose                                                |
+| ------------------- | -------- | ---------------------------------- | ------------------------------------------------------ |
+| `USDA_API_KEY`      | Yes      | —                                  | FoodData Central API key; server exits if unset.       |
 | `USDA_API_BASE_URL` | No       | `https://api.nal.usda.gov/fdc/v1/` | Override when routing through a proxy or staging host. |
 
 You can provide these through `.env`, your shell, or the MCP client configuration. Use the `config://usda-fooddata/environment` resource to inspect the active settings from inside the client.
@@ -202,29 +202,30 @@ Foundation datasets sometimes omit energy, protein, or carbohydrate rows entirel
 3. Retries the abridged call without nutrient filters so the API can decide which nutrients to include.
 4. Reads `labelNutrients`, including Foundation label names such as `Energy (kcal)`, `Total fat (NLEA)`, `Protein (NLEA)`, and `Total carbohydrate (NLEA)` even when USDA exposes those values only under display-friendly keys.
 
-If any macro is still missing *and* the entry’s `dataType` is `Foundation`, `get_macros` stops with an error that lists the missing fields and suggests either switching to a record that publishes macros (e.g., SR Legacy or Survey entries) or deriving them yourself. A quick rule of thumb: calories ≈ `(fat_g * 9) + (protein_g * 4) + (carbs_g * 4)`. Some oils (including FDC 748608) still omit USDA-provided calories/protein/carbs entirely across abridged/full/label payloads—this is a USDA database gap, not an MCP parsing bug—so keep the manual derivation handy for edge cases that never expose those fields.
+If any macro is still missing _and_ the entry’s `dataType` is `Foundation`, `get_macros` stops with an error that lists the missing fields and suggests either switching to a record that publishes macros (e.g., SR Legacy or Survey entries) or deriving them yourself. A quick rule of thumb: calories ≈ `(fat_g * 9) + (protein_g * 4) + (carbs_g * 4)`. Some oils (including FDC 748608) still omit USDA-provided calories/protein/carbs entirely across abridged/full/label payloads—this is a USDA database gap, not an MCP parsing bug—so keep the manual derivation handy for edge cases that never expose those fields.
 
 Need both macro and micronutrient panels simultaneously? Call `get_macro_micros` to collapse the workflow into a single USDA request. It enforces the same Foundation guard for missing macros, surfaces micronutrient gaps in the summary, and automatically falls back to an unfiltered USDA fetch if the combined nutrient filter list exceeds USDA’s request limit (so you still get data, just with a slightly larger payload).
+
 ### Micronutrient coverage (`get_micros`)
 
 USDA keeps dozens of micronutrients in FoodData Central. The `get_micros` tool focuses on the vitamins and minerals that appear on standard nutrition labels so agents can request them in one call. Each value is per 100 g and travels through the same abridged/full/label fallback path used by `get_macros`.
 
-| Nutrient | Unit | USDA nutrient IDs (abridged/full) | Label aliases |
-| --- | --- | --- | --- |
-| Calcium | mg | 1087, 301 | `calcium` |
-| Iron | mg | 1089, 303 | `iron` |
-| Potassium | mg | 1092, 306 | `potassium` |
-| Sodium | mg | 1093, 307 | `sodium` |
-| Magnesium | mg | 1090, 304 | `magnesium` |
-| Zinc | mg | 1095, 309 | `zinc` |
-| Vitamin A (RAE) | mcg | 1104, 318 | `vitaminA`, `vitamin a` |
-| Vitamin C | mg | 1162, 401 | `vitaminC`, `vitamin c` |
-| Vitamin D (D2 + D3) | mcg | 1114, 324, 328 | `vitaminD`, `vitamin d` |
-| Vitamin E (alpha-tocopherol) | mg | 1109, 323 | `vitaminE`, `vitamin e` |
-| Vitamin K (phylloquinone) | mcg | 1185, 430 | `vitaminK`, `vitamin k` |
-| Folate, total | mcg | 1186, 417 | `folate` |
-| Vitamin B6 | mg | 1175, 415 | `vitaminB6`, `vitamin b-6` |
-| Vitamin B12 | mcg | 1178, 418 | `vitaminB12`, `vitamin b-12` |
+| Nutrient                     | Unit | USDA nutrient IDs (abridged/full) | Label aliases                |
+| ---------------------------- | ---- | --------------------------------- | ---------------------------- |
+| Calcium                      | mg   | 1087, 301                         | `calcium`                    |
+| Iron                         | mg   | 1089, 303                         | `iron`                       |
+| Potassium                    | mg   | 1092, 306                         | `potassium`                  |
+| Sodium                       | mg   | 1093, 307                         | `sodium`                     |
+| Magnesium                    | mg   | 1090, 304                         | `magnesium`                  |
+| Zinc                         | mg   | 1095, 309                         | `zinc`                       |
+| Vitamin A (RAE)              | mcg  | 1104, 318                         | `vitaminA`, `vitamin a`      |
+| Vitamin C                    | mg   | 1162, 401                         | `vitaminC`, `vitamin c`      |
+| Vitamin D (D2 + D3)          | mcg  | 1114, 324, 328                    | `vitaminD`, `vitamin d`      |
+| Vitamin E (alpha-tocopherol) | mg   | 1109, 323                         | `vitaminE`, `vitamin e`      |
+| Vitamin K (phylloquinone)    | mcg  | 1185, 430                         | `vitaminK`, `vitamin k`      |
+| Folate, total                | mcg  | 1186, 417                         | `folate`                     |
+| Vitamin B6                   | mg   | 1175, 415                         | `vitaminB6`, `vitamin b-6`   |
+| Vitamin B12                  | mcg  | 1178, 418                         | `vitaminB12`, `vitamin b-12` |
 
 If a micronutrient is absent from both the nutrient list and `labelNutrients`, the response lists it under `summary.notes` so downstream automation can decide whether to fall back to manual data.
 
@@ -246,7 +247,6 @@ If a micronutrient is absent from both the nutrient list and `labelNutrients`, t
 - Missing or invalid API keys cause the server to log the issue and exit immediately so MCP clients can surface the error.
 - Nutrient helpers follow a strict escalation path (scoped abridged → `format=full` → unfiltered abridged → `labelNutrients`) and recognise alternate labels such as `Total fat (NLEA)` so oils and other sparse entries still return macro values. When a Foundation record still hides any macro after those retries, `get_macros` intentionally errors and points you to alternate FDC IDs or the calorie conversion formula so downstream automations do not ingest partial data unknowingly.
 - Legacy SR Legacy identifiers that USDA has retired (currently 4053 for olive oil) are automatically mapped to their documented replacement IDs, and every substitution is called out in the tool summaries (plus `requestedFdcIds` in the preview payload) so downstream automations can update their catalogs.
-
 
 ## Handling Missing USDA Equivalents
 
